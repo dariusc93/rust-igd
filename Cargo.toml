@@ -22,10 +22,11 @@ log = "0.4"
 rand = "0.8"
 tokio = { version = "1", optional = true, features = ["net"] }
 async-std = { version = "1", optional = true }
-surf = { version = "2.3.2", optional = true }
+surf = { version = "2.3.2", optional = true, default-features = false }
 
 url = "2"
 xmltree = "0.10"
+async-trait = { version = "0.1.72", optional = true }
 
 [dependencies.hyper]
 default-features = false
@@ -39,8 +40,8 @@ tokio = { version = "1", features = ["full"] }
 async-std = { version = "1", features = ["attributes"]}
 
 [features]
-aio_tokio = ["futures", "tokio", "hyper", "bytes", "http"]
-aio_async_std = ["futures", "async-std", "surf", "bytes", "http"]
+aio_tokio = ["futures", "tokio", "hyper", "bytes", "http", "async-trait"]
+aio_async_std = ["futures", "async-std", "surf/h1-client-rustls", "bytes", "http", "async-trait"]
 default = []
 
 [[example]]

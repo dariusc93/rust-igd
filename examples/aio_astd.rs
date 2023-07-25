@@ -11,7 +11,7 @@
 use std::env;
 use std::net::SocketAddr;
 
-use igd_next::aio::search_gateway;
+use igd_next::aio::async_std::search_gateway;
 use igd_next::PortMappingProtocol;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 
@@ -23,7 +23,7 @@ async fn main() {
             println!("Local socket address is missing!");
             println!("This example requires a socket address representing the local machine and the port to bind to as an argument");
             println!("Example: target/[debug or release]/examples/aio 192.168.0.198:4321");
-            println!("Example: cargo run --features aio --example aio -- 192.168.0.198:4321");
+            println!("Example: cargo run --features aio_async_std --example aio_astd -- 192.168.0.198:4321");
             return;
         }
     };

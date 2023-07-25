@@ -3,7 +3,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
-use super::soap;
+use super::Provider;
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
 
 use crate::common::{self, messages, parsing, parsing::RequestReponse};
@@ -11,7 +11,7 @@ use crate::PortMappingProtocol;
 
 /// This structure represents a gateway found by the search functions.
 #[derive(Clone, Debug)]
-pub struct Gateway {
+pub struct Gateway<P> {
     /// Socket address of the gateway
     pub addr: SocketAddr,
     /// Root url of the device
@@ -22,12 +22,14 @@ pub struct Gateway {
     pub control_schema_url: String,
     /// Control schema for all actions
     pub control_schema: HashMap<String, Vec<String>>,
+    /// Executor provider
+    pub provider: P,
 }
 
-impl Gateway {
+impl<P: Provider> Gateway<P> {
     async fn perform_request(&self, header: &str, body: &str, ok: &str) -> Result<RequestReponse, RequestError> {
         let url = format!("{self}");
-        let text = soap::send_async(&url, soap::Action::new(header), body).await?;
+        let text = P::send_async(&url, header, body).await?;
         parsing::parse_response(text, ok)
     }
 
@@ -279,21 +281,21 @@ impl Gateway {
     }
 }
 
-impl fmt::Display for Gateway {
+impl<P> fmt::Display for Gateway<P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "http://{}{}", self.addr, self.control_url)
     }
 }
 
-impl PartialEq for Gateway {
-    fn eq(&self, other: &Gateway) -> bool {
+impl<P> PartialEq for Gateway<P> {
+    fn eq(&self, other: &Gateway<P>) -> bool {
         self.addr == other.addr && self.control_url == other.control_url
     }
 }
 
-impl Eq for Gateway {}
+impl<P> Eq for Gateway<P> {}
 
-impl Hash for Gateway {
+impl<P> Hash for Gateway<P> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.addr.hash(state);
         self.control_url.hash(state);
