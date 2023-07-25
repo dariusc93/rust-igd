@@ -4,19 +4,6 @@
 //! Use one of the `search_gateway` functions to obtain a `Gateway` object.
 //! You can then communicate with the device via this object.
 
-extern crate attohttpc;
-#[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
-extern crate bytes;
-#[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
-extern crate futures;
-#[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
-extern crate http;
-#[cfg(feature = "aio_tokio")]
-extern crate hyper;
-extern crate log;
-#[cfg(feature = "aio_tokio")]
-extern crate tokio;
-
 // data structures
 pub use self::common::parsing::PortMappingEntry;
 pub use self::common::SearchOptions;
