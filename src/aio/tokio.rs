@@ -21,6 +21,7 @@ use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
 use crate::errors::SearchError;
 
 /// Tokio provider for the [`Gateway`].
+#[derive(Debug, Clone)]
 pub struct Tokio;
 
 #[async_trait]

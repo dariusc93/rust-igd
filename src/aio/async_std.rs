@@ -15,6 +15,7 @@ use crate::errors::SearchError;
 use crate::RequestError;
 
 /// Async-std provider for the [`Gateway`].
+#[derive(Debug, Clone)]
 pub struct AsyncStd;
 
 #[async_trait]
