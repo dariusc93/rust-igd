@@ -24,8 +24,7 @@ pub struct Gateway {
 
 impl Gateway {
     fn perform_request(&self, header: &str, body: &str, ok: &str) -> RequestResult {
-        let url = format!("http://{}{}", self.addr, self.control_url);
-        let response = minreq::post(url)
+        let response = minreq::post(format!("http://{}{}", self.addr, self.control_url))
                 .with_header("SOAPAction", header)
                 .with_header("Content-Type", "text/xml")
                 .with_body(body)
@@ -38,7 +37,7 @@ impl Gateway {
     pub fn get_external_ip(&self) -> Result<IpAddr, GetExternalIpError> {
         parsing::parse_get_external_ip_response(self.perform_request(
             messages::GET_EXTERNAL_IP_HEADER,
-            &messages::format_get_external_ip_message(),
+            messages::GET_EXTERNAL_IP_MESSAGE,
             "GetExternalIPAddressResponse",
         ))
     }
