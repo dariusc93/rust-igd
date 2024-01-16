@@ -1,9 +1,9 @@
-use std::error;
-use std::fmt;
-use std::io;
-use std::str;
+use alloc::fmt;
+use alloc::str;
 #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
-use std::string::FromUtf8Error;
+use alloc::string::FromUtf8Error;
+use std::error;
+use std::io;
 
 #[cfg(feature = "aio_tokio")]
 use tokio::time::error::Elapsed;
@@ -452,10 +452,8 @@ pub enum GetGenericPortMappingEntryError {
 impl From<RequestError> for GetGenericPortMappingEntryError {
     fn from(err: RequestError) -> GetGenericPortMappingEntryError {
         match err {
-            RequestError::ErrorCode(code, _) if code == 606 => GetGenericPortMappingEntryError::ActionNotAuthorized,
-            RequestError::ErrorCode(code, _) if code == 713 => {
-                GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid
-            }
+            RequestError::ErrorCode(606, _) => GetGenericPortMappingEntryError::ActionNotAuthorized,
+            RequestError::ErrorCode(713, _) => GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid,
             other => GetGenericPortMappingEntryError::RequestError(other),
         }
     }
@@ -495,7 +493,7 @@ pub enum Error {
 }
 
 /// A result type where the error is `igd::Error`.
-pub type Result<T = ()> = std::result::Result<T, Error>;
+pub type Result<T = ()> = core::result::Result<T, Error>;
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

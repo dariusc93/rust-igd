@@ -1,5 +1,5 @@
-use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use core::net::{IpAddr, SocketAddr};
+use core::time::Duration;
 
 /// Gateway search configuration
 ///

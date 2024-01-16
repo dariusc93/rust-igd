@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::net::{IpAddr, SocketAddr};
+use alloc::collections::BTreeMap;
+use alloc::fmt;
+use core::hash::{Hash, Hasher};
+use core::net::{IpAddr, SocketAddr};
 
 use super::Provider;
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
@@ -21,7 +21,7 @@ pub struct Gateway<P> {
     /// Url to get schema data from
     pub control_schema_url: String,
     /// Control schema for all actions
-    pub control_schema: HashMap<String, Vec<String>>,
+    pub control_schema: BTreeMap<String, Vec<String>>,
     /// Executor provider
     pub provider: P,
 }
@@ -118,8 +118,7 @@ impl<P: Provider> Gateway<P> {
         } else {
             // The router does not have the AddAnyPortMapping method.
             // Fall back to using AddPortMapping with a random port.
-            self
-                .retry_add_random_port_mapping(protocol, local_addr, lease_duration, description)
+            self.retry_add_random_port_mapping(protocol, local_addr, lease_duration, description)
                 .await
         }
     }
@@ -163,8 +162,7 @@ impl<P: Provider> Gateway<P> {
             Err(err) => match parsing::convert_add_random_port_mapping_error(err) {
                 Some(err) => Err(err),
                 None => {
-                    self
-                        .add_same_port_mapping(protocol, local_addr, lease_duration, &description)
+                    self.add_same_port_mapping(protocol, local_addr, lease_duration, &description)
                         .await
                 }
             },

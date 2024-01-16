@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use core::net::{IpAddr, SocketAddr};
 use std::io;
-use std::net::{IpAddr, SocketAddr};
 
 use url::Url;
 use xmltree::{self, Element};
@@ -117,7 +117,7 @@ fn parse_service(service: &Element) -> Option<(String, String)> {
     }
 }
 
-pub fn parse_schemas<R>(resp: R) -> Result<HashMap<String, Vec<String>>, SearchError>
+pub fn parse_schemas<R>(resp: R) -> Result<BTreeMap<String, Vec<String>>, SearchError>
 where
     R: io::Read,
 {
@@ -135,7 +135,7 @@ where
     schema.next().ok_or(SearchError::InvalidResponse)
 }
 
-fn parse_action_list(action_list: &Element) -> Option<HashMap<String, Vec<String>>> {
+fn parse_action_list(action_list: &Element) -> Option<BTreeMap<String, Vec<String>>> {
     Some(
         action_list
             .children
@@ -347,8 +347,8 @@ pub fn parse_get_generic_port_mapping_entry(
         .and_then(|t| t.parse::<u16>().ok())
         .ok_or_else(make_err("Field NewExternalPort is invalid".into()))?;
     let protocol = match extract_field("NewProtocol")?.get_text() {
-        Some(std::borrow::Cow::Borrowed("UDP")) => PortMappingProtocol::UDP,
-        Some(std::borrow::Cow::Borrowed("TCP")) => PortMappingProtocol::TCP,
+        Some(alloc::borrow::Cow::Borrowed("UDP")) => PortMappingProtocol::UDP,
+        Some(alloc::borrow::Cow::Borrowed("TCP")) => PortMappingProtocol::TCP,
         _ => {
             return Err(GetGenericPortMappingEntryError::RequestError(
                 RequestError::InvalidResponse("Field NewProtocol is invalid".into()),
@@ -405,7 +405,7 @@ fn test_parse_search_result_case_insensitivity() {
 #[test]
 fn test_parse_search_result_ok() {
     let result = parse_search_result("location:http://0.0.0.0:0/control_url").unwrap();
-    assert_eq!(result.0.ip(), IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+    assert_eq!(result.0.ip(), IpAddr::V4(core::net::Ipv4Addr::new(0, 0, 0, 0)));
     assert_eq!(result.0.port(), 0);
     assert_eq!(&result.1[..], "/control_url");
 }

@@ -1,6 +1,7 @@
-use std::collections::HashMap;
-use std::net::{SocketAddr, UdpSocket};
-use std::str;
+use alloc::collections::BTreeMap;
+use alloc::str;
+use core::net::SocketAddr;
+use std::net::UdpSocket;
 
 use log::debug;
 
@@ -72,12 +73,11 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 fn get_control_urls(addr: &SocketAddr, root_url: &str) -> Result<(String, String), SearchError> {
     let url = format!("http://{}:{}{}", addr.ip(), addr.port(), root_url);
     let respond = minreq::get(url).send().map_err(SearchError::HttpError)?;
-    parsing::parse_control_urls(&respond.as_bytes()[..])
-
+    parsing::parse_control_urls(respond.as_bytes())
 }
 
-fn get_schemas(addr: &SocketAddr, control_schema_url: &str) -> Result<HashMap<String, Vec<String>>, SearchError> {
+fn get_schemas(addr: &SocketAddr, control_schema_url: &str) -> Result<BTreeMap<String, Vec<String>>, SearchError> {
     let url = format!("http://{}:{}{}", addr.ip(), addr.port(), control_schema_url);
     let respond = minreq::get(url).send().map_err(SearchError::HttpError)?;
-    parsing::parse_schemas(&respond.as_bytes()[..])
+    parsing::parse_schemas(respond.as_bytes())
 }

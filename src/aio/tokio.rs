@@ -1,7 +1,7 @@
 //! Tokio abstraction for the aio [`Gateway`].
 
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use alloc::collections::BTreeMap;
+use core::net::SocketAddr;
 
 use async_trait::async_trait;
 use futures::prelude::*;
@@ -100,7 +100,7 @@ fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, 
     debug!("handling broadcast response from: {}", from);
 
     // Convert response to text.
-    let text = std::str::from_utf8(data).map_err(SearchError::from)?;
+    let text = core::str::from_utf8(data).map_err(SearchError::from)?;
 
     // Parse socket address and path.
     let (addr, root_url) = parsing::parse_search_result(text)?;
@@ -128,7 +128,7 @@ async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, Stri
 async fn get_control_schemas(
     addr: &SocketAddr,
     control_schema_url: &str,
-) -> Result<HashMap<String, Vec<String>>, SearchError> {
+) -> Result<BTreeMap<String, Vec<String>>, SearchError> {
     let uri = match format!("http://{addr}{control_schema_url}").parse() {
         Ok(uri) => uri,
         Err(err) => return Err(SearchError::from(err)),

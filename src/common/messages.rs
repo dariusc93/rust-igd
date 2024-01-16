@@ -1,5 +1,5 @@
 use crate::PortMappingProtocol;
-use std::net::SocketAddr;
+use core::net::SocketAddr;
 
 // Content of the request.
 pub const SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r

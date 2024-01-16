@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use alloc::collections::BTreeMap;
+use alloc::fmt;
+use core::net::{IpAddr, SocketAddr};
 
 use crate::common::{self, messages, parsing, parsing::RequestResult};
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
@@ -19,16 +19,17 @@ pub struct Gateway {
     /// Url to get schema data from
     pub control_schema_url: String,
     /// Control schema for all actions
-    pub control_schema: HashMap<String, Vec<String>>,
+    pub control_schema: BTreeMap<String, Vec<String>>,
 }
 
 impl Gateway {
     fn perform_request(&self, header: &str, body: &str, ok: &str) -> RequestResult {
         let response = minreq::post(format!("http://{}{}", self.addr, self.control_url))
-                .with_header("SOAPAction", header)
-                .with_header("Content-Type", "text/xml")
-                .with_body(body)
-                .send().map_err(MinreqHttpError)?;
+            .with_header("SOAPAction", header)
+            .with_header("Content-Type", "text/xml")
+            .with_body(body)
+            .send()
+            .map_err(MinreqHttpError)?;
 
         parsing::parse_response(response.as_str()?.to_string(), ok)
     }
