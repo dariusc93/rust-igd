@@ -15,7 +15,7 @@ use async_std::future::TimeoutError;
 #[derive(Debug)]
 pub enum RequestError {
     /// attohttp error
-    AttoHttpError(attohttpc::Error),
+    MinreqHttpError(minreq::Error),
     /// IO Error
     IoError(io::Error),
     /// The response from the gateway could not be parsed.
@@ -41,9 +41,9 @@ pub enum RequestError {
     Utf8Error(FromUtf8Error),
 }
 
-impl From<attohttpc::Error> for RequestError {
-    fn from(err: attohttpc::Error) -> RequestError {
-        RequestError::AttoHttpError(err)
+impl From<minreq::Error> for RequestError {
+    fn from(err: minreq::Error) -> RequestError {
+        RequestError::MinreqHttpError(err)
     }
 }
 
@@ -98,7 +98,7 @@ impl From<Elapsed> for RequestError {
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            RequestError::AttoHttpError(ref e) => write!(f, "HTTP error {e}"),
+            RequestError::MinreqHttpError(ref e) => write!(f, "HTTP error {e}"),
             RequestError::InvalidResponse(ref e) => write!(f, "Invalid response from gateway: {e}"),
             RequestError::IoError(ref e) => write!(f, "IO error. {e}"),
             RequestError::ErrorCode(n, ref e) => write!(f, "Gateway response error {n}: {e}"),
@@ -118,7 +118,7 @@ impl fmt::Display for RequestError {
 impl std::error::Error for RequestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
-            RequestError::AttoHttpError(ref e) => Some(e),
+            RequestError::MinreqHttpError(ref e) => Some(e),
             RequestError::InvalidResponse(..) => None,
             RequestError::IoError(ref e) => Some(e),
             RequestError::ErrorCode(..) => None,
@@ -323,7 +323,7 @@ impl std::error::Error for AddPortError {
 #[derive(Debug)]
 pub enum SearchError {
     /// Http/Hyper error
-    HttpError(attohttpc::Error),
+    HttpError(minreq::Error),
     /// Unable to process the response
     InvalidResponse,
     /// IO Error
@@ -343,8 +343,8 @@ pub enum SearchError {
     InvalidUri(hyper::http::uri::InvalidUri),
 }
 
-impl From<attohttpc::Error> for SearchError {
-    fn from(err: attohttpc::Error) -> SearchError {
+impl From<minreq::Error> for SearchError {
+    fn from(err: minreq::Error) -> SearchError {
         SearchError::HttpError(err)
     }
 }

@@ -1,3 +1,5 @@
+cargo-features = ["trim-paths", "profile-rustflags"]
+
 [package]
 authors = ["Darius C", "Simon Bernier St-Pierre <sbernierstpierre@gmail.com>"]
 description = "Internet Gateway Protocol client"
@@ -14,7 +16,6 @@ version = "0.14.3"
 all-features = true
 
 [dependencies]
-attohttpc = { version = "0.24", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 http = { version = "0.2", optional = true }
@@ -27,6 +28,7 @@ surf = { version = "2.3.2", optional = true, default-features = false }
 url = "2"
 xmltree = "0.10"
 async-trait = { version = "0.1.72", optional = true }
+minreq = "2.11.0"
 
 [dependencies.hyper]
 default-features = false
@@ -66,3 +68,24 @@ name = "external_ip"
 
 [[example]]
 name = "remove_port"
+
+[profile.release]
+incremental = true
+lto = "thin"
+# strip = "debuginfo"
+trim-paths = "all"
+rustflags = ["-Zlocation-detail=none"]
+
+[profile.min-size-release]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+opt-level = "s"
+
+[profile.release-strip]
+inherits = "release"
+strip = "symbols"
+
+[profile.min-size-release-strip]
+inherits = "min-size-release"
+strip = "symbols"
