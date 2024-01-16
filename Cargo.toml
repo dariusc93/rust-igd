@@ -1,5 +1,3 @@
-cargo-features = ["trim-paths", "profile-rustflags"]
-
 [package]
 authors = ["Darius C", "Simon Bernier St-Pierre <sbernierstpierre@gmail.com>"]
 description = "Internet Gateway Protocol client"
@@ -68,24 +66,3 @@ name = "external_ip"
 
 [[example]]
 name = "remove_port"
-
-[profile.release]
-incremental = true
-lto = "thin"
-# strip = "debuginfo"
-trim-paths = "all"
-rustflags = ["-Zlocation-detail=none"]
-
-[profile.min-size-release]
-inherits = "release"
-codegen-units = 1
-lto = "fat"
-opt-level = "s"
-
-[profile.release-strip]
-inherits = "release"
-strip = "symbols"
-
-[profile.min-size-release-strip]
-inherits = "min-size-release"
-strip = "symbols"
