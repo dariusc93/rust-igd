@@ -15,6 +15,7 @@ use log::debug;
 use nourl::Url;
 use reqwless::request::RequestBuilder;
 use reqwless::{client::HttpClient, request::Method};
+use core::future::Future;
 
 use crate::{RequestError, SearchError};
 
@@ -26,7 +27,7 @@ pub(crate) const HEADER_NAME: &str = "SOAPAction";
 /// Trait to allow abstracting over `tokio` and `async-std`.
 pub trait Provider {
     /// Send an async request over the executor.
-    async fn send_async(&mut self, url: &str, action: &str, body: &str) -> Result<String, RequestError>;
+    fn send_async(&mut self, url: &str, action: &str, body: &str) -> impl Future<Output = Result<String, RequestError>> + Send;
 }
 
 /// Reqwless provider for the [`Gateway`].
