@@ -1,5 +1,5 @@
+use core::net::SocketAddr;
 use std::env;
-use std::net::SocketAddr;
 
 extern crate igd_next as igd;
 

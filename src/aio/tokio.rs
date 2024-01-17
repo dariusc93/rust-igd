@@ -1,81 +1,94 @@
 //! Tokio abstraction for the aio [`Gateway`].
 
-use std::collections::HashMap;
-use std::net::SocketAddr;
-
-use async_trait::async_trait;
+use super::{Reqwless, MAX_RESPONSE_SIZE};
+use crate::aio::Gateway;
+use crate::common::{messages, SearchOptions};
+use crate::errors::SearchError;
+use embedded_io_adapters::tokio_1::FromTokio;
+use embedded_io_async::{ErrorType, Read, Write};
+use embedded_nal_async::{AddrType, Dns, IpAddr, SocketAddr, TcpConnect};
 use futures::prelude::*;
-use hyper::{
-    header::{CONTENT_LENGTH, CONTENT_TYPE},
-    Body, Client, Request,
-};
-
+use log::debug;
+use reqwless::client::HttpClient;
+use reqwless::TryBufRead;
+use tokio::net::TcpStream;
 use tokio::{net::UdpSocket, time::timeout};
 
-use log::debug;
+/// Stream shim for Tokio
 
-use crate::common::{messages, parsing, SearchOptions};
-use crate::{aio::Gateway, RequestError};
+pub struct TokioStream(pub(crate) FromTokio<TcpStream>);
 
-use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
-use crate::errors::SearchError;
+impl TryBufRead for TokioStream {}
 
-/// Tokio provider for the [`Gateway`].
-#[derive(Debug, Clone)]
-pub struct Tokio;
+impl ErrorType for TokioStream {
+    type Error = <FromTokio<TcpStream> as ErrorType>::Error;
+}
 
-#[async_trait]
-impl Provider for Tokio {
-    async fn send_async(url: &str, action: &str, body: &str) -> Result<String, RequestError> {
-        let client = Client::new();
+impl Read for TokioStream {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.0.read(buf).await
+    }
+}
 
-        let req = Request::builder()
-            .uri(url)
-            .method("POST")
-            .header(HEADER_NAME, action)
-            .header(CONTENT_TYPE, "text/xml")
-            .header(CONTENT_LENGTH, body.len() as u64)
-            .body(Body::from(body.to_string()))?;
+impl Write for TokioStream {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        self.0.write(buf).await
+    }
+}
 
-        let resp = client.request(req).await?;
-        let body = hyper::body::to_bytes(resp.into_body()).await?;
-        let string = String::from_utf8(body.to_vec())?;
-        Ok(string)
+/// TcpSocket shim for Tokio
+pub struct TokioTcp;
+
+impl TcpConnect for TokioTcp {
+    type Error = std::io::Error;
+    type Connection<'a> = TokioStream;
+
+    async fn connect(&self, remote: SocketAddr) -> Result<Self::Connection<'_>, Self::Error> {
+        let ip = match remote {
+            SocketAddr::V4(a) => a.ip().octets().into(),
+            SocketAddr::V6(a) => a.ip().octets().into(),
+        };
+        let remote = SocketAddr::new(ip, remote.port());
+        let stream = TcpStream::connect(remote).await?;
+        let stream = FromTokio::new(stream);
+        Ok(TokioStream(stream))
+    }
+}
+
+/// DNS resolver for Tokio
+pub struct TokioDns;
+
+impl Dns for TokioDns {
+    type Error = std::io::Error;
+
+    async fn get_host_by_name(&self, host: &str, addr_type: AddrType) -> Result<IpAddr, Self::Error> {
+        for address in tokio::net::lookup_host((host, 0_u16)).await? {
+            match address {
+                SocketAddr::V4(a) if addr_type == AddrType::IPv4 || addr_type == AddrType::Either => {
+                    return Ok(IpAddr::V4(a.ip().octets().into()))
+                }
+                SocketAddr::V6(a) if addr_type == AddrType::IPv6 || addr_type == AddrType::Either => {
+                    return Ok(IpAddr::V6(a.ip().octets().into()))
+                }
+                _ => {}
+            }
+        }
+        Err(std::io::ErrorKind::AddrNotAvailable.into())
+    }
+
+    async fn get_host_by_address(&self, _: IpAddr, _: &mut [u8]) -> Result<usize, Self::Error> {
+        todo!()
     }
 }
 
 /// Search for a gateway with the provided options.
-pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, SearchError> {
+pub async fn search_gateway<'a>(
+    options: SearchOptions,
+) -> Result<Gateway<Reqwless<'a, TokioTcp, TokioDns>>, SearchError> {
     // Create socket for future calls
-    let mut socket = UdpSocket::bind(&options.bind_addr).await?;
+    let socket = UdpSocket::bind(&options.bind_addr).await?;
 
-    send_search_request(&mut socket, options.broadcast_address).await?;
-
-    let search_response = receive_search_response(&mut socket);
-
-    // Receive search response, optionally with a timeout.
-    let (response_body, from) = match options.timeout {
-        Some(t) => timeout(t, search_response).await?,
-        None => search_response.await,
-    }?;
-
-    let (addr, root_url) = handle_broadcast_resp(&from, &response_body)?;
-
-    let (control_schema_url, control_url) = get_control_urls(&addr, &root_url).await?;
-    let control_schema = get_control_schemas(&addr, &control_schema_url).await?;
-
-    Ok(Gateway {
-        addr,
-        root_url,
-        control_url,
-        control_schema_url,
-        control_schema,
-        provider: Tokio,
-    })
-}
-
-// Create a new search.
-async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result<(), SearchError> {
+    let addr = options.broadcast_address;
     debug!(
         "sending broadcast request to: {} on interface: {:?}",
         addr,
@@ -85,62 +98,20 @@ async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result
         .send_to(messages::SEARCH_REQUEST.as_bytes(), &addr)
         .map_ok(|_| ())
         .map_err(SearchError::from)
-        .await
-}
-
-async fn receive_search_response(socket: &mut UdpSocket) -> Result<(Vec<u8>, SocketAddr), SearchError> {
-    let mut buff = [0u8; MAX_RESPONSE_SIZE];
-    let (n, from) = socket.recv_from(&mut buff).map_err(SearchError::from).await?;
-    debug!("received broadcast response from: {}", from);
-    Ok((buff[..n].to_vec(), from))
-}
-
-// Handle a UDP response message.
-fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, String), SearchError> {
-    debug!("handling broadcast response from: {}", from);
-
-    // Convert response to text.
-    let text = std::str::from_utf8(data).map_err(SearchError::from)?;
-
-    // Parse socket address and path.
-    let (addr, root_url) = parsing::parse_search_result(text)?;
-
-    Ok((addr, root_url))
-}
-
-async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, String), SearchError> {
-    let uri = match format!("http://{addr}{path}").parse() {
-        Ok(uri) => uri,
-        Err(err) => return Err(SearchError::from(err)),
-    };
-
-    debug!("requesting control url from: {uri}");
-    let client = Client::new();
-    let resp = hyper::body::to_bytes(client.get(uri).await?.into_body())
-        .map_err(SearchError::from)
         .await?;
 
-    debug!("handling control response from: {addr}");
-    let c = std::io::Cursor::new(&resp);
-    parsing::parse_control_urls(c)
-}
-
-async fn get_control_schemas(
-    addr: &SocketAddr,
-    control_schema_url: &str,
-) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let uri = match format!("http://{addr}{control_schema_url}").parse() {
-        Ok(uri) => uri,
-        Err(err) => return Err(SearchError::from(err)),
+    let search_response = async {
+        let mut buff = [0u8; MAX_RESPONSE_SIZE];
+        let (n, from) = socket.recv_from(&mut buff).map_err(SearchError::from).await?;
+        debug!("received broadcast response from: {}", from);
+        Ok::<_, SearchError>((buff[..n].to_vec(), from))
     };
 
-    debug!("requesting control schema from: {uri}");
-    let client = Client::new();
-    let resp = hyper::body::to_bytes(client.get(uri).await?.into_body())
-        .map_err(SearchError::from)
-        .await?;
+    // Receive search response, optionally with a timeout.
+    let (response_body, from) = match options.timeout {
+        Some(t) => timeout(t, search_response).await?,
+        None => search_response.await,
+    }?;
 
-    debug!("handling schema response from: {addr}");
-    let c = std::io::Cursor::new(&resp);
-    parsing::parse_schemas(c)
+    super::create_gateway(from, response_body, HttpClient::new(&TokioTcp, &TokioDns)).await
 }

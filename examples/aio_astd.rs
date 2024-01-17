@@ -8,8 +8,8 @@
 //! If everything works fine, 2 port mappings are added, 1 removed and we're left with single
 //! port mapping: External 1234 ---> 4321 Internal
 
+use core::net::SocketAddr;
 use std::env;
-use std::net::SocketAddr;
 
 use igd_next::aio::async_std::search_gateway;
 use igd_next::PortMappingProtocol;
@@ -31,7 +31,7 @@ async fn main() {
 
     let _ = SimpleLogger::init(LevelFilter::Debug, LogConfig::default());
 
-    let gateway = match search_gateway(Default::default()).await {
+    let mut gateway = match search_gateway(Default::default()).await {
         Ok(g) => g,
         Err(err) => return println!("Faild to find IGD: {err}"),
     };

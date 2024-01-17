@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use core::net::{IpAddr, SocketAddr};
 use std::io;
-use std::net::{IpAddr, SocketAddr};
 
-use url::Url;
+use nourl::Url;
 use xmltree::{self, Element};
 
 use crate::errors::{
@@ -10,22 +10,18 @@ use crate::errors::{
     SearchError,
 };
 use crate::PortMappingProtocol;
+use SearchError::InvalidResponse;
 
 // Parse the result.
 pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchError> {
-    use SearchError::InvalidResponse;
-
     for line in text.lines() {
         let line = line.trim();
         if line.to_ascii_lowercase().starts_with("location:") {
             if let Some(colon) = line.find(':') {
                 let url_text = &line[colon + 1..].trim();
                 let url = Url::parse(url_text).map_err(|_| InvalidResponse)?;
-                let addr: IpAddr = url
-                    .host_str()
-                    .ok_or(InvalidResponse)
-                    .and_then(|s| s.parse().map_err(|_| InvalidResponse))?;
-                let port: u16 = url.port_or_known_default().ok_or(InvalidResponse)?;
+                let addr: IpAddr = url.host().parse().map_err(|_| InvalidResponse)?;
+                let port: u16 = url.port().ok_or(InvalidResponse)?;
 
                 return Ok((SocketAddr::new(addr, port), url.path().to_string()));
             }
@@ -117,7 +113,7 @@ fn parse_service(service: &Element) -> Option<(String, String)> {
     }
 }
 
-pub fn parse_schemas<R>(resp: R) -> Result<HashMap<String, Vec<String>>, SearchError>
+pub fn parse_schemas<R>(resp: R) -> Result<BTreeMap<String, Vec<String>>, SearchError>
 where
     R: io::Read,
 {
@@ -135,7 +131,7 @@ where
     schema.next().ok_or(SearchError::InvalidResponse)
 }
 
-fn parse_action_list(action_list: &Element) -> Option<HashMap<String, Vec<String>>> {
+fn parse_action_list(action_list: &Element) -> Option<BTreeMap<String, Vec<String>>> {
     Some(
         action_list
             .children
@@ -347,8 +343,8 @@ pub fn parse_get_generic_port_mapping_entry(
         .and_then(|t| t.parse::<u16>().ok())
         .ok_or_else(make_err("Field NewExternalPort is invalid".into()))?;
     let protocol = match extract_field("NewProtocol")?.get_text() {
-        Some(std::borrow::Cow::Borrowed("UDP")) => PortMappingProtocol::UDP,
-        Some(std::borrow::Cow::Borrowed("TCP")) => PortMappingProtocol::TCP,
+        Some(alloc::borrow::Cow::Borrowed("UDP")) => PortMappingProtocol::UDP,
+        Some(alloc::borrow::Cow::Borrowed("TCP")) => PortMappingProtocol::TCP,
         _ => {
             return Err(GetGenericPortMappingEntryError::RequestError(
                 RequestError::InvalidResponse("Field NewProtocol is invalid".into()),
@@ -405,7 +401,7 @@ fn test_parse_search_result_case_insensitivity() {
 #[test]
 fn test_parse_search_result_ok() {
     let result = parse_search_result("location:http://0.0.0.0:0/control_url").unwrap();
-    assert_eq!(result.0.ip(), IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+    assert_eq!(result.0.ip(), IpAddr::V4(core::net::Ipv4Addr::new(0, 0, 0, 0)));
     assert_eq!(result.0.port(), 0);
     assert_eq!(&result.1[..], "/control_url");
 }
@@ -501,8 +497,8 @@ fn test_parse_device1() {
 
 #[test]
 fn test_parse_device2() {
-    let text = r#"
-    <?xml version="1.0" ?>
+    use assert_matches::assert_matches;
+    let text = r#"<?xml version="1.0" ?>
     <root xmlns="urn:schemas-upnp-org:device-1-0">
         <specVersion>
             <major>1</major>
@@ -601,7 +597,7 @@ fn test_parse_device2() {
     </root>
     "#;
     let result = parse_control_urls(text.as_bytes());
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let (control_schema_url, control_url) = result.unwrap();
     assert_eq!(control_url, "/igdupnp/control/WANIPConn1");
     assert_eq!(control_schema_url, "/igdconnSCPD.xml");

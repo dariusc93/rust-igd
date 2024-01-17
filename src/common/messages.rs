@@ -1,5 +1,5 @@
 use crate::PortMappingProtocol;
-use std::net::SocketAddr;
+use core::net::SocketAddr;
 
 // Content of the request.
 pub const SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r
@@ -30,16 +30,13 @@ fn format_message(body: String) -> String {
     format!("{MESSAGE_HEAD}{body}{MESSAGE_TAIL}")
 }
 
-pub fn format_get_external_ip_message() -> String {
-    r#"<?xml version="1.0"?>
+pub const GET_EXTERNAL_IP_MESSAGE: &str = r#"<?xml version="1.0"?>
 <s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
     <s:Body>
         <m:GetExternalIPAddress xmlns:m="urn:schemas-upnp-org:service:WANIPConnection:1">
         </m:GetExternalIPAddress>
     </s:Body>
-</s:Envelope>"#
-    .into()
-}
+</s:Envelope>"#;
 
 pub fn format_add_any_port_mapping_message(
     schema: &[String],

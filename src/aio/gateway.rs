@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::net::{IpAddr, SocketAddr};
+use alloc::collections::BTreeMap;
+use alloc::fmt;
+use core::hash::{Hash, Hasher};
+use core::net::{IpAddr, SocketAddr};
 
 use super::Provider;
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
@@ -21,24 +21,24 @@ pub struct Gateway<P> {
     /// Url to get schema data from
     pub control_schema_url: String,
     /// Control schema for all actions
-    pub control_schema: HashMap<String, Vec<String>>,
+    pub control_schema: BTreeMap<String, Vec<String>>,
     /// Executor provider
     pub provider: P,
 }
 
 impl<P: Provider> Gateway<P> {
-    async fn perform_request(&self, header: &str, body: &str, ok: &str) -> Result<RequestReponse, RequestError> {
+    async fn perform_request(&mut self, header: &str, body: &str, ok: &str) -> Result<RequestReponse, RequestError> {
         let url = format!("{self}");
-        let text = P::send_async(&url, header, body).await?;
+        let text = self.provider.send_async(&url, header, body).await?;
         parsing::parse_response(text, ok)
     }
 
     /// Get the external IP address of the gateway in a tokio compatible way
-    pub async fn get_external_ip(&self) -> Result<IpAddr, GetExternalIpError> {
+    pub async fn get_external_ip(&mut self) -> Result<IpAddr, GetExternalIpError> {
         let result = self
             .perform_request(
                 messages::GET_EXTERNAL_IP_HEADER,
-                &messages::format_get_external_ip_message(),
+                messages::GET_EXTERNAL_IP_MESSAGE,
                 "GetExternalIPAddressResponse",
             )
             .await;
@@ -55,7 +55,7 @@ impl<P: Provider> Gateway<P> {
     ///
     /// The external address that was mapped on success. Otherwise an error.
     pub async fn get_any_address(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         local_addr: SocketAddr,
         lease_duration: u32,
@@ -78,7 +78,7 @@ impl<P: Provider> Gateway<P> {
     ///
     /// The external port that was mapped on success. Otherwise an error.
     pub async fn add_any_port(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         local_addr: SocketAddr,
         lease_duration: u32,
@@ -118,15 +118,13 @@ impl<P: Provider> Gateway<P> {
         } else {
             // The router does not have the AddAnyPortMapping method.
             // Fall back to using AddPortMapping with a random port.
-            let gateway = self.clone();
-            gateway
-                .retry_add_random_port_mapping(protocol, local_addr, lease_duration, description)
+            self.retry_add_random_port_mapping(protocol, local_addr, lease_duration, description)
                 .await
         }
     }
 
     async fn retry_add_random_port_mapping(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         local_addr: SocketAddr,
         lease_duration: u32,
@@ -146,14 +144,13 @@ impl<P: Provider> Gateway<P> {
     }
 
     async fn add_random_port_mapping(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         local_addr: SocketAddr,
         lease_duration: u32,
         description: &str,
     ) -> Result<u16, AddAnyPortError> {
         let description = description.to_owned();
-        let gateway = self.clone();
 
         let external_port = common::random_port();
         let res = self
@@ -165,8 +162,7 @@ impl<P: Provider> Gateway<P> {
             Err(err) => match parsing::convert_add_random_port_mapping_error(err) {
                 Some(err) => Err(err),
                 None => {
-                    gateway
-                        .add_same_port_mapping(protocol, local_addr, lease_duration, &description)
+                    self.add_same_port_mapping(protocol, local_addr, lease_duration, &description)
                         .await
                 }
             },
@@ -174,7 +170,7 @@ impl<P: Provider> Gateway<P> {
     }
 
     async fn add_same_port_mapping(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         local_addr: SocketAddr,
         lease_duration: u32,
@@ -190,7 +186,7 @@ impl<P: Provider> Gateway<P> {
     }
 
     async fn add_port_mapping(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         external_port: u16,
         local_addr: SocketAddr,
@@ -220,7 +216,7 @@ impl<P: Provider> Gateway<P> {
     /// The local_addr is the address where the traffic is sent to.
     /// The lease_duration parameter is in seconds. A value of 0 is infinite.
     pub async fn add_port(
-        &self,
+        &mut self,
         protocol: PortMappingProtocol,
         external_port: u16,
         local_addr: SocketAddr,
@@ -244,7 +240,11 @@ impl<P: Provider> Gateway<P> {
     }
 
     /// Remove a port mapping.
-    pub async fn remove_port(&self, protocol: PortMappingProtocol, external_port: u16) -> Result<(), RemovePortError> {
+    pub async fn remove_port(
+        &mut self,
+        protocol: PortMappingProtocol,
+        external_port: u16,
+    ) -> Result<(), RemovePortError> {
         let res = self
             .perform_request(
                 messages::DELETE_PORT_MAPPING_HEADER,
@@ -267,7 +267,7 @@ impl<P: Provider> Gateway<P> {
     /// Not all existing port mappings might be visible to this client.
     /// If the index is out of bound, GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid will be returned
     pub async fn get_generic_port_mapping_entry(
-        &self,
+        &mut self,
         index: u32,
     ) -> Result<parsing::PortMappingEntry, errors::GetGenericPortMappingEntryError> {
         let result = self

@@ -1,5 +1,5 @@
-use std::net::{IpAddr, SocketAddr};
-use std::time::Duration;
+use core::net::{IpAddr, SocketAddr};
+use core::time::Duration;
 
 /// Gateway search configuration
 ///
@@ -10,7 +10,7 @@ use std::time::Duration;
 /// [struct update syntax](https://doc.rust-lang.org/book/ch05-01-defining-structs.html#creating-instances-from-other-instances-with-struct-update-syntax).
 /// ```
 /// # use std::time::Duration;
-/// # use igd::SearchOptions;
+/// # use igd_next::SearchOptions;
 /// let opts = SearchOptions {
 ///     timeout: Some(Duration::from_secs(60)),
 ///     ..Default::default()

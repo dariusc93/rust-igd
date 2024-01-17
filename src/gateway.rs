@@ -1,12 +1,13 @@
-use attohttpc::{Method, RequestBuilder};
-use std::collections::HashMap;
-use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use alloc::collections::BTreeMap;
+use alloc::fmt;
+use core::net::{IpAddr, SocketAddr};
 
 use crate::common::{self, messages, parsing, parsing::RequestResult};
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
 use crate::PortMappingProtocol;
-use crate::RequestError::AttoHttpError;
+use crate::RequestError::MinreqHttpError;
+
+pub(crate) const HEADER_NAME: &str = "SOAPAction";
 
 /// This structure represents a gateway found by the search functions.
 #[derive(Clone, Debug)]
@@ -20,30 +21,26 @@ pub struct Gateway {
     /// Url to get schema data from
     pub control_schema_url: String,
     /// Control schema for all actions
-    pub control_schema: HashMap<String, Vec<String>>,
+    pub control_schema: BTreeMap<String, Vec<String>>,
 }
 
 impl Gateway {
     fn perform_request(&self, header: &str, body: &str, ok: &str) -> RequestResult {
-        let url = format!("http://{}{}", self.addr, self.control_url);
+        let response = minreq::post(format!("http://{}{}", self.addr, self.control_url))
+            .with_header(HEADER_NAME, header)
+            .with_header("Content-Type", "text/xml")
+            .with_body(body)
+            .send()
+            .map_err(MinreqHttpError)?;
 
-        let response = match RequestBuilder::try_new(Method::POST, url) {
-            Ok(request_builder) => request_builder
-                .header("SOAPAction", header)
-                .header("Content-Type", "text/xml")
-                .text(body)
-                .send()?,
-            Err(e) => return Err(AttoHttpError(e)),
-        };
-
-        parsing::parse_response(response.text()?, ok)
+        parsing::parse_response(response.as_str()?.to_string(), ok)
     }
 
     /// Get the external IP address of the gateway.
     pub fn get_external_ip(&self) -> Result<IpAddr, GetExternalIpError> {
         parsing::parse_get_external_ip_response(self.perform_request(
             messages::GET_EXTERNAL_IP_HEADER,
-            &messages::format_get_external_ip_message(),
+            messages::GET_EXTERNAL_IP_MESSAGE,
             "GetExternalIPAddressResponse",
         ))
     }
