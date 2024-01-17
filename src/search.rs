@@ -18,7 +18,7 @@ pub(crate) const MAX_RESPONSE_SIZE: usize = 1500;
 ///
 /// # Example
 /// ```no_run
-/// use igd::{search_gateway, SearchOptions, Result};
+/// use igd_next::{search_gateway, SearchOptions, Result};
 ///
 /// fn main() -> Result {
 ///     let gateway = search_gateway(Default::default())?;

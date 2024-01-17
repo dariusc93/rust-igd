@@ -43,6 +43,7 @@ simplelog = "0.12"
 tokio = { version = "1", features = ["full"] }
 async-std = { version = "1", features = ["attributes"] }
 embedded-io-adapters = { version = "0.6.1", features = ["tokio-1"] }
+assert_matches = "1.5.0"
 
 [features]
 aio_tokio = ["aio", "tokio", "embedded-io-adapters/tokio-1"]

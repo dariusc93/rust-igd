@@ -497,8 +497,8 @@ fn test_parse_device1() {
 
 #[test]
 fn test_parse_device2() {
-    let text = r#"
-    <?xml version="1.0" ?>
+    use assert_matches::assert_matches;
+    let text = r#"<?xml version="1.0" ?>
     <root xmlns="urn:schemas-upnp-org:device-1-0">
         <specVersion>
             <major>1</major>
@@ -597,7 +597,7 @@ fn test_parse_device2() {
     </root>
     "#;
     let result = parse_control_urls(text.as_bytes());
-    assert!(result.is_ok());
+    assert_matches!(result, Ok(_));
     let (control_schema_url, control_url) = result.unwrap();
     assert_eq!(control_url, "/igdupnp/control/WANIPConn1");
     assert_eq!(control_schema_url, "/igdconnSCPD.xml");
