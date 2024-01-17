@@ -10,11 +10,10 @@ use crate::errors::{
     SearchError,
 };
 use crate::PortMappingProtocol;
+use SearchError::InvalidResponse;
 
 // Parse the result.
 pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchError> {
-    use SearchError::InvalidResponse;
-
     for line in text.lines() {
         let line = line.trim();
         if line.to_ascii_lowercase().starts_with("location:") {

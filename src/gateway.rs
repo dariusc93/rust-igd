@@ -7,6 +7,8 @@ use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, Rem
 use crate::PortMappingProtocol;
 use crate::RequestError::MinreqHttpError;
 
+pub(crate) const HEADER_NAME: &str = "SOAPAction";
+
 /// This structure represents a gateway found by the search functions.
 #[derive(Clone, Debug)]
 pub struct Gateway {
@@ -25,7 +27,7 @@ pub struct Gateway {
 impl Gateway {
     fn perform_request(&self, header: &str, body: &str, ok: &str) -> RequestResult {
         let response = minreq::post(format!("http://{}{}", self.addr, self.control_url))
-            .with_header("SOAPAction", header)
+            .with_header(HEADER_NAME, header)
             .with_header("Content-Type", "text/xml")
             .with_body(body)
             .send()

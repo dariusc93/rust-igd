@@ -324,7 +324,7 @@ pub enum SearchError {
     #[cfg(feature = "aio")]
     ReqwlessError(reqwless::Error),
     /// Error parsing URI
-    #[cfg(feature = "aio_tokio")]
+    #[cfg(feature = "aio")]
     InvalidUri(nourl::Error),
 }
 
@@ -392,6 +392,7 @@ impl fmt::Display for SearchError {
             SearchError::XmlError(ref e) => write!(f, "XML error: {e}"),
             #[cfg(feature = "aio")]
             SearchError::ReqwlessError(ref e) => write!(f, "Reqwest Error: {e:?}"),
+            #[cfg(feature = "aio")]
             SearchError::InvalidUri(ref e) => write!(f, "InvalidUri Error: {e:?}"),
         }
     }
@@ -408,6 +409,7 @@ impl error::Error for SearchError {
             SearchError::XmlError(ref e) => Some(e),
             #[cfg(feature = "aio")]
             SearchError::ReqwlessError(..) => None,
+            #[cfg(feature = "aio")]
             SearchError::InvalidUri(..) => None,
         }
     }

@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr};
+use core::net::{IpAddr, SocketAddr};
 
 extern crate igd_next as igd;
 

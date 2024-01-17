@@ -9,6 +9,8 @@ use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
 
+pub(crate) const MAX_RESPONSE_SIZE: usize = 1500;
+
 /// Search gateway, using the given `SearchOptions`.
 ///
 /// The default `SearchOptions` should suffice in most cases.
@@ -32,7 +34,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
     socket.send_to(messages::SEARCH_REQUEST.as_bytes(), options.broadcast_address)?;
 
     loop {
-        let mut buf = [0u8; 1500];
+        let mut buf = [0u8; MAX_RESPONSE_SIZE];
         let (read, _) = socket.recv_from(&mut buf)?;
         let text = str::from_utf8(&buf[..read])?;
 

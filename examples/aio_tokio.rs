@@ -10,7 +10,7 @@
 
 use embedded_nal_async::SocketAddr;
 use igd_next::aio::tokio::search_gateway;
-use igd_next::{PortMappingProtocol};
+use igd_next::PortMappingProtocol;
 use simplelog::{Config as LogConfig, LevelFilter, SimpleLogger};
 use std::env;
 

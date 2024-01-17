@@ -49,7 +49,7 @@ aio_tokio = ["aio", "tokio", "embedded-io-adapters/tokio-1"]
 aio_async_std = ["aio", "async-std", "embedded-io-adapters/futures-03"]
 aio = ["futures", "reqwless", "embedded-io-async", "embedded-nal-async", "http"]
 sync = ["minreq"]
-default = ["aio_tokio", "aio_async_std"]
+default = ["sync"]
 
 [[example]]
 name = "add_any_port"
