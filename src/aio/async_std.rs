@@ -1,67 +1,96 @@
 //! Async-std abstraction for the aio [`Gateway`].
 
-use alloc::collections::BTreeMap;
-use core::net::SocketAddr;
+use async_std::net::TcpStream;
+use embedded_io_async::{ErrorType, Read, Write};
+use embedded_nal_async::{AddrType, Dns, IpAddr, SocketAddr, TcpConnect};
+use reqwless::client::HttpClient;
+use reqwless::TryBufRead;
 
+use async_std::net::ToSocketAddrs;
 use async_std::{future::timeout, net::UdpSocket};
-use async_trait::async_trait;
 use futures::prelude::*;
 use log::debug;
 
-use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
+use super::{Reqwless, MAX_RESPONSE_SIZE};
 use crate::aio::Gateway;
-use crate::common::{messages, parsing, SearchOptions};
+use crate::common::{messages, SearchOptions};
 use crate::errors::SearchError;
-use crate::RequestError;
+use embedded_io_adapters::futures_03::FromFutures;
 
-/// Async-std provider for the [`Gateway`].
-#[derive(Debug, Clone)]
-pub struct AsyncStd;
+/// Stream shim for async_std
+pub struct AsyncStdStream(pub(crate) FromFutures<TcpStream>);
 
-#[async_trait]
-impl Provider for AsyncStd {
-    async fn send_async(url: &str, action: &str, body: &str) -> Result<String, RequestError> {
-        Ok(surf::post(url)
-            .header(HEADER_NAME, action)
-            .content_type("text/xml")
-            .body(body)
-            .recv_string()
-            .await?)
+impl TryBufRead for AsyncStdStream {}
+
+impl ErrorType for AsyncStdStream {
+    type Error = <FromFutures<TcpStream> as ErrorType>::Error;
+}
+
+impl Read for AsyncStdStream {
+    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        self.0.read(buf).await
+    }
+}
+
+impl Write for AsyncStdStream {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        self.0.write(buf).await
+    }
+}
+
+/// TcpSocket shim for async_std
+pub struct AsyncStdTcp;
+
+impl TcpConnect for AsyncStdTcp {
+    type Error = std::io::Error;
+    type Connection<'a> = AsyncStdStream;
+
+    async fn connect(&self, remote: SocketAddr) -> Result<Self::Connection<'_>, Self::Error> {
+        let ip = match remote {
+            SocketAddr::V4(a) => a.ip().octets().into(),
+            SocketAddr::V6(a) => a.ip().octets().into(),
+        };
+        let remote = SocketAddr::new(ip, remote.port());
+        let stream = TcpStream::connect(remote).await?;
+        let stream = FromFutures::new(stream);
+        Ok(AsyncStdStream(stream))
+    }
+}
+
+/// DNS Resolver using async_std
+pub struct AsyncStdDns;
+
+impl Dns for AsyncStdDns {
+    type Error = std::io::Error;
+
+    async fn get_host_by_name(&self, host: &str, addr_type: AddrType) -> Result<IpAddr, Self::Error> {
+        for address in (host, 0).to_socket_addrs().await? {
+            match address {
+                SocketAddr::V4(a) if addr_type == AddrType::IPv4 || addr_type == AddrType::Either => {
+                    return Ok(IpAddr::V4(a.ip().octets().into()))
+                }
+                SocketAddr::V6(a) if addr_type == AddrType::IPv6 || addr_type == AddrType::Either => {
+                    return Ok(IpAddr::V6(a.ip().octets().into()))
+                }
+                _ => {}
+            }
+        }
+        Err(std::io::ErrorKind::AddrNotAvailable.into())
+    }
+
+    async fn get_host_by_address(&self, _: IpAddr, _: &mut [u8]) -> Result<usize, Self::Error> {
+        todo!()
     }
 }
 
 /// Search for a gateway with the provided options.
-pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>, SearchError> {
-    // Create socket for future calls.
-    let mut socket = UdpSocket::bind(&options.bind_addr).await?;
+pub async fn search_gateway<'a>(
+    options: SearchOptions,
+) -> Result<Gateway<Reqwless<'a, AsyncStdTcp, AsyncStdDns>>, SearchError> {
+    // Create socket for future calls
+    let socket = UdpSocket::bind(&options.bind_addr).await?;
 
-    send_search_request(&mut socket, options.broadcast_address).await?;
-
-    let search_response = receive_search_response(&mut socket);
-
-    // Receive search response, optionally with a timeout.
-    let (response_body, from) = match options.timeout {
-        Some(t) => timeout(t, search_response).await?,
-        None => search_response.await,
-    }?;
-
-    let (addr, root_url) = handle_broadcast_resp(&from, &response_body)?;
-
-    let (control_schema_url, control_url) = get_control_urls(&addr, &root_url).await?;
-    let control_schema = get_control_schemas(&addr, &control_schema_url).await?;
-
-    Ok(Gateway {
-        addr,
-        root_url,
-        control_url,
-        control_schema_url,
-        control_schema,
-        provider: AsyncStd,
-    })
-}
-
-// Create a new search.
-async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result<(), SearchError> {
+    let addr = options.broadcast_address;
     debug!(
         "sending broadcast request to: {} on interface: {:?}",
         addr,
@@ -71,51 +100,20 @@ async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result
         .send_to(messages::SEARCH_REQUEST.as_bytes(), &addr)
         .map_ok(|_| ())
         .map_err(SearchError::from)
-        .await
-}
+        .await?;
 
-async fn receive_search_response(socket: &mut UdpSocket) -> Result<(Vec<u8>, SocketAddr), SearchError> {
-    let mut buff = [0u8; MAX_RESPONSE_SIZE];
-    let (n, from) = socket.recv_from(&mut buff).map_err(SearchError::from).await?;
-    debug!("received broadcast response from: {}", from);
-    Ok((buff[..n].to_vec(), from))
-}
+    let search_response = async {
+        let mut buff = [0u8; MAX_RESPONSE_SIZE];
+        let (n, from) = socket.recv_from(&mut buff).map_err(SearchError::from).await?;
+        debug!("received broadcast response from: {}", from);
+        Ok::<_, SearchError>((buff[..n].to_vec(), from))
+    };
 
-// Handle a UDP response message.
-fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, String), SearchError> {
-    debug!("handling broadcast response from: {}", from);
+    // Receive search response, optionally with a timeout.
+    let (response_body, from) = match options.timeout {
+        Some(t) => timeout(t, search_response).await?,
+        None => search_response.await,
+    }?;
 
-    // Convert response to text.
-    let text = core::str::from_utf8(data).map_err(SearchError::from)?;
-
-    // Parse socket address and path.
-    let (addr, root_url) = parsing::parse_search_result(text)?;
-
-    Ok((addr, root_url))
-}
-
-async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, String), SearchError> {
-    let uri = format!("http://{addr}{path}");
-
-    debug!("requesting control url from: {}", uri);
-
-    let resp = surf::get(uri).recv_bytes().await?;
-
-    debug!("handling control response from: {}", addr);
-    let c = std::io::Cursor::new(&resp);
-    parsing::parse_control_urls(c)
-}
-
-async fn get_control_schemas(
-    addr: &SocketAddr,
-    control_schema_url: &str,
-) -> Result<BTreeMap<String, Vec<String>>, SearchError> {
-    let uri = format!("http://{addr}{control_schema_url}");
-
-    debug!("requesting control schema from: {uri}");
-    let resp = surf::get(uri).recv_bytes().await?;
-
-    debug!("handling schema response from: {addr}");
-    let c = std::io::Cursor::new(&resp);
-    parsing::parse_schemas(c)
+    super::create_gateway(from, response_body, HttpClient::new(&AsyncStdTcp, &AsyncStdDns)).await
 }

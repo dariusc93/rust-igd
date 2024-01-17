@@ -1,6 +1,6 @@
 use alloc::fmt;
 use alloc::str;
-#[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+#[cfg(feature = "aio")]
 use alloc::string::FromUtf8Error;
 use std::error;
 use std::io;
@@ -14,7 +14,8 @@ use async_std::future::TimeoutError;
 /// Errors that can occur when sending the request to the gateway.
 #[derive(Debug)]
 pub enum RequestError {
-    /// attohttp error
+    #[cfg(feature = "sync")]
+    /// minreq error
     MinreqHttpError(minreq::Error),
     /// IO Error
     IoError(io::Error),
@@ -25,22 +26,17 @@ pub enum RequestError {
     /// Action is not supported by the gateway
     UnsupportedAction(String),
     /// When using the aio feature.
-    #[cfg(feature = "aio_tokio")]
-    HyperError(hyper::Error),
-
-    /// When using aio async std feature
-    #[cfg(feature = "aio_async_std")]
-    SurfError(surf::Error),
-
-    #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+    #[cfg(feature = "aio")]
+    ReqwlessError(reqwless::Error),
+    #[cfg(feature = "aio")]
     /// http crate error type
     HttpError(http::Error),
-
-    #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+    #[cfg(feature = "aio")]
     /// Error parsing HTTP body
     Utf8Error(FromUtf8Error),
 }
 
+#[cfg(feature = "sync")]
 impl From<minreq::Error> for RequestError {
     fn from(err: minreq::Error) -> RequestError {
         RequestError::MinreqHttpError(err)
@@ -53,28 +49,21 @@ impl From<io::Error> for RequestError {
     }
 }
 
-#[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+#[cfg(feature = "aio")]
 impl From<http::Error> for RequestError {
     fn from(err: http::Error) -> RequestError {
         RequestError::HttpError(err)
     }
 }
 
-#[cfg(feature = "aio_async_std")]
-impl From<surf::Error> for RequestError {
-    fn from(err: surf::Error) -> RequestError {
-        RequestError::SurfError(err)
+#[cfg(feature = "aio")]
+impl From<reqwless::Error> for RequestError {
+    fn from(err: reqwless::Error) -> RequestError {
+        RequestError::ReqwlessError(err)
     }
 }
 
-#[cfg(feature = "aio_tokio")]
-impl From<hyper::Error> for RequestError {
-    fn from(err: hyper::Error) -> RequestError {
-        RequestError::HyperError(err)
-    }
-}
-
-#[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+#[cfg(any(feature = "aio", feature = "aio_async_std"))]
 impl From<FromUtf8Error> for RequestError {
     fn from(err: FromUtf8Error) -> RequestError {
         RequestError::Utf8Error(err)
@@ -98,18 +87,17 @@ impl From<Elapsed> for RequestError {
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            #[cfg(feature = "sync")]
             RequestError::MinreqHttpError(ref e) => write!(f, "HTTP error {e}"),
             RequestError::InvalidResponse(ref e) => write!(f, "Invalid response from gateway: {e}"),
             RequestError::IoError(ref e) => write!(f, "IO error. {e}"),
             RequestError::ErrorCode(n, ref e) => write!(f, "Gateway response error {n}: {e}"),
             RequestError::UnsupportedAction(ref e) => write!(f, "Gateway does not support action: {e}"),
-            #[cfg(feature = "aio_async_std")]
-            RequestError::SurfError(ref e) => write!(f, "Surf Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
-            #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+            #[cfg(feature = "aio")]
+            RequestError::ReqwlessError(ref e) => write!(f, "Reqwless Error: {e:?}"),
+            #[cfg(feature = "aio")]
             RequestError::HttpError(ref e) => write!(f, "Http  Error: {e}"),
-            #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+            #[cfg(feature = "aio")]
             RequestError::Utf8Error(ref e) => write!(f, "Utf8Error Error: {e}"),
         }
     }
@@ -118,18 +106,17 @@ impl fmt::Display for RequestError {
 impl std::error::Error for RequestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
+            #[cfg(feature = "sync")]
             RequestError::MinreqHttpError(ref e) => Some(e),
             RequestError::InvalidResponse(..) => None,
             RequestError::IoError(ref e) => Some(e),
             RequestError::ErrorCode(..) => None,
             RequestError::UnsupportedAction(..) => None,
-            #[cfg(feature = "aio_async_std")]
-            RequestError::SurfError(ref e) => Some(e.as_ref()),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HyperError(ref e) => Some(e),
-            #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+            #[cfg(feature = "aio")]
+            RequestError::ReqwlessError(..) => None,
+            #[cfg(feature = "aio")]
             RequestError::HttpError(ref e) => Some(e),
-            #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
+            #[cfg(feature = "aio")]
             RequestError::Utf8Error(ref e) => Some(e),
         }
     }
@@ -323,6 +310,7 @@ impl std::error::Error for AddPortError {
 #[derive(Debug)]
 pub enum SearchError {
     /// Http/Hyper error
+    #[cfg(feature = "sync")]
     HttpError(minreq::Error),
     /// Unable to process the response
     InvalidResponse,
@@ -332,17 +320,15 @@ pub enum SearchError {
     Utf8Error(str::Utf8Error),
     /// XML processing error
     XmlError(xmltree::ParseError),
-    /// When using aio_async_std feature
-    #[cfg(feature = "aio_async_std")]
-    SurfError(surf::Error),
     /// When using the aio feature.
-    #[cfg(feature = "aio_tokio")]
-    HyperError(hyper::Error),
+    #[cfg(feature = "aio")]
+    ReqwlessError(reqwless::Error),
     /// Error parsing URI
     #[cfg(feature = "aio_tokio")]
-    InvalidUri(hyper::http::uri::InvalidUri),
+    InvalidUri(nourl::Error),
 }
 
+#[cfg(feature = "sync")]
 impl From<minreq::Error> for SearchError {
     fn from(err: minreq::Error) -> SearchError {
         SearchError::HttpError(err)
@@ -367,23 +353,16 @@ impl From<xmltree::ParseError> for SearchError {
     }
 }
 
-#[cfg(feature = "aio_async_std")]
-impl From<surf::Error> for SearchError {
-    fn from(err: surf::Error) -> SearchError {
-        SearchError::SurfError(err)
+#[cfg(feature = "aio")]
+impl From<reqwless::Error> for SearchError {
+    fn from(err: reqwless::Error) -> SearchError {
+        SearchError::ReqwlessError(err)
     }
 }
 
-#[cfg(feature = "aio_tokio")]
-impl From<hyper::Error> for SearchError {
-    fn from(err: hyper::Error) -> SearchError {
-        SearchError::HyperError(err)
-    }
-}
-
-#[cfg(feature = "aio_tokio")]
-impl From<hyper::http::uri::InvalidUri> for SearchError {
-    fn from(err: hyper::http::uri::InvalidUri) -> SearchError {
+#[cfg(feature = "aio")]
+impl From<nourl::Error> for SearchError {
+    fn from(err: nourl::Error) -> SearchError {
         SearchError::InvalidUri(err)
     }
 }
@@ -405,17 +384,15 @@ impl From<Elapsed> for SearchError {
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            #[cfg(feature = "sync")]
             SearchError::HttpError(ref e) => write!(f, "HTTP error {e}"),
             SearchError::InvalidResponse => write!(f, "Invalid response"),
             SearchError::IoError(ref e) => write!(f, "IO error: {e}"),
             SearchError::Utf8Error(ref e) => write!(f, "UTF-8 error: {e}"),
             SearchError::XmlError(ref e) => write!(f, "XML error: {e}"),
-            #[cfg(feature = "aio_async_std")]
-            SearchError::SurfError(ref e) => write!(f, "Surf Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::InvalidUri(ref e) => write!(f, "InvalidUri Error: {e}"),
+            #[cfg(feature = "aio")]
+            SearchError::ReqwlessError(ref e) => write!(f, "Reqwest Error: {e:?}"),
+            SearchError::InvalidUri(ref e) => write!(f, "InvalidUri Error: {e:?}"),
         }
     }
 }
@@ -423,17 +400,15 @@ impl fmt::Display for SearchError {
 impl error::Error for SearchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
+            #[cfg(feature = "sync")]
             SearchError::HttpError(ref e) => Some(e),
             SearchError::InvalidResponse => None,
             SearchError::IoError(ref e) => Some(e),
             SearchError::Utf8Error(ref e) => Some(e),
             SearchError::XmlError(ref e) => Some(e),
-            #[cfg(feature = "aio_async_std")]
-            SearchError::SurfError(ref e) => Some(e.as_ref()),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::HyperError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::InvalidUri(ref e) => Some(e),
+            #[cfg(feature = "aio")]
+            SearchError::ReqwlessError(..) => None,
+            SearchError::InvalidUri(..) => None,
         }
     }
 }

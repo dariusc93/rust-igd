@@ -31,7 +31,7 @@ async fn main() {
 
     let _ = SimpleLogger::init(LevelFilter::Debug, LogConfig::default());
 
-    let gateway = match search_gateway(Default::default()).await {
+    let mut gateway = match search_gateway(Default::default()).await {
         Ok(g) => g,
         Err(err) => return println!("Faild to find IGD: {err}"),
     };

@@ -2,7 +2,7 @@ use alloc::collections::BTreeMap;
 use core::net::{IpAddr, SocketAddr};
 use std::io;
 
-use url::Url;
+use nourl::Url;
 use xmltree::{self, Element};
 
 use crate::errors::{
@@ -21,11 +21,8 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
             if let Some(colon) = line.find(':') {
                 let url_text = &line[colon + 1..].trim();
                 let url = Url::parse(url_text).map_err(|_| InvalidResponse)?;
-                let addr: IpAddr = url
-                    .host_str()
-                    .ok_or(InvalidResponse)
-                    .and_then(|s| s.parse().map_err(|_| InvalidResponse))?;
-                let port: u16 = url.port_or_known_default().ok_or(InvalidResponse)?;
+                let addr: IpAddr = url.host().parse().map_err(|_| InvalidResponse)?;
+                let port: u16 = url.port().ok_or(InvalidResponse)?;
 
                 return Ok((SocketAddr::new(addr, port), url.path().to_string()));
             }
