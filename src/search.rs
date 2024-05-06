@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::str;
 
-use attohttpc::{Method, RequestBuilder};
 use log::debug;
 
 use crate::common::{messages, parsing, SearchOptions};
@@ -72,22 +71,13 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 
 fn get_control_urls(addr: &SocketAddr, root_url: &str) -> Result<(String, String), SearchError> {
     let url = format!("http://{}:{}{}", addr.ip(), addr.port(), root_url);
-    match RequestBuilder::try_new(Method::GET, url) {
-        Ok(request_builder) => {
-            let response = request_builder.send()?;
-            parsing::parse_control_urls(&response.bytes()?[..])
-        }
-        Err(error) => Err(SearchError::HttpError(error)),
-    }
+    let respond = minreq::get(url).send().map_err(SearchError::HttpError)?;
+    parsing::parse_control_urls(&respond.as_bytes()[..])
+
 }
 
 fn get_schemas(addr: &SocketAddr, control_schema_url: &str) -> Result<HashMap<String, Vec<String>>, SearchError> {
     let url = format!("http://{}:{}{}", addr.ip(), addr.port(), control_schema_url);
-    match RequestBuilder::try_new(Method::GET, url) {
-        Ok(request_builder) => {
-            let response = request_builder.send()?;
-            parsing::parse_schemas(&response.bytes()?[..])
-        }
-        Err(error) => Err(SearchError::HttpError(error)),
-    }
+    let respond = minreq::get(url).send().map_err(SearchError::HttpError)?;
+    parsing::parse_schemas(&respond.as_bytes()[..])
 }

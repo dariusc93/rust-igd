@@ -38,7 +38,7 @@ impl<P: Provider> Gateway<P> {
         let result = self
             .perform_request(
                 messages::GET_EXTERNAL_IP_HEADER,
-                &messages::format_get_external_ip_message(),
+                messages::GET_EXTERNAL_IP_MESSAGE,
                 "GetExternalIPAddressResponse",
             )
             .await;
@@ -118,8 +118,7 @@ impl<P: Provider> Gateway<P> {
         } else {
             // The router does not have the AddAnyPortMapping method.
             // Fall back to using AddPortMapping with a random port.
-            let gateway = self.clone();
-            gateway
+            self
                 .retry_add_random_port_mapping(protocol, local_addr, lease_duration, description)
                 .await
         }
@@ -153,7 +152,6 @@ impl<P: Provider> Gateway<P> {
         description: &str,
     ) -> Result<u16, AddAnyPortError> {
         let description = description.to_owned();
-        let gateway = self.clone();
 
         let external_port = common::random_port();
         let res = self
@@ -165,7 +163,7 @@ impl<P: Provider> Gateway<P> {
             Err(err) => match parsing::convert_add_random_port_mapping_error(err) {
                 Some(err) => Err(err),
                 None => {
-                    gateway
+                    self
                         .add_same_port_mapping(protocol, local_addr, lease_duration, &description)
                         .await
                 }
