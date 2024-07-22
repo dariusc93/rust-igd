@@ -326,6 +326,8 @@ pub enum SearchError {
     HttpError(attohttpc::Error),
     /// Unable to process the response
     InvalidResponse,
+    /// Did not receive any valid response within timeout
+    NoResponseWithinTimeout,
     /// IO Error
     IoError(io::Error),
     /// UTF-8 decoding error
@@ -407,6 +409,7 @@ impl fmt::Display for SearchError {
         match *self {
             SearchError::HttpError(ref e) => write!(f, "HTTP error {e}"),
             SearchError::InvalidResponse => write!(f, "Invalid response"),
+            SearchError::NoResponseWithinTimeout => write!(f, "No response within timeout"),
             SearchError::IoError(ref e) => write!(f, "IO error: {e}"),
             SearchError::Utf8Error(ref e) => write!(f, "UTF-8 error: {e}"),
             SearchError::XmlError(ref e) => write!(f, "XML error: {e}"),
@@ -425,6 +428,7 @@ impl error::Error for SearchError {
         match *self {
             SearchError::HttpError(ref e) => Some(e),
             SearchError::InvalidResponse => None,
+            SearchError::NoResponseWithinTimeout => None,
             SearchError::IoError(ref e) => Some(e),
             SearchError::Utf8Error(ref e) => Some(e),
             SearchError::XmlError(ref e) => Some(e),

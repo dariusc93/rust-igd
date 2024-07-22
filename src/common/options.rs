@@ -1,6 +1,8 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Gateway search configuration
 ///
 /// SearchOptions::default() should suffice for most situations.
@@ -30,7 +32,7 @@ impl Default for SearchOptions {
         Self {
             bind_addr: (IpAddr::from([0, 0, 0, 0]), 0).into(),
             broadcast_address: "239.255.255.250:1900".parse().unwrap(),
-            timeout: Some(Duration::from_secs(10)),
+            timeout: Some(DEFAULT_TIMEOUT),
         }
     }
 }
