@@ -13,10 +13,9 @@ use hyper::{
 use tokio::{net::UdpSocket, time::timeout};
 
 use log::debug;
-use tokio::time::error::Elapsed;
 use crate::common::{messages, parsing, SearchOptions};
 use crate::{aio::Gateway, RequestError};
-use crate::common::options::DEFAULT_TIMEOUT;
+use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
 use crate::errors::SearchError;
 
@@ -43,9 +42,6 @@ impl Provider for Tokio {
         Ok(string)
     }
 }
-
-/// Timeout for each broadcast response.
-pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Search for a gateway with the provided options.
 pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, SearchError> {
