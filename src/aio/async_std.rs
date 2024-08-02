@@ -11,6 +11,7 @@ use log::debug;
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
 use crate::aio::Gateway;
 use crate::common::{messages, parsing, SearchOptions};
+use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
 use crate::errors::SearchError;
 use crate::RequestError;
 
@@ -37,27 +38,62 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>,
 
     send_search_request(&mut socket, options.broadcast_address).await?;
 
-    let search_response = receive_search_response(&mut socket);
+    let max_search_time = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let start_search_time = std::time::Instant::now();
 
-    // Receive search response, optionally with a timeout.
-    let (response_body, from) = match options.timeout {
-        Some(t) => timeout(t, search_response).await?,
-        None => search_response.await,
-    }?;
+    loop {
+        if start_search_time.elapsed() > max_search_time {
+            break Err(SearchError::NoResponseWithinTimeout);
+        }
 
-    let (addr, root_url) = handle_broadcast_resp(&from, &response_body)?;
+        let search_response = receive_search_response(&mut socket);
 
-    let (control_schema_url, control_url) = get_control_urls(&addr, &root_url).await?;
-    let control_schema = get_control_schemas(&addr, &control_schema_url).await?;
+        // Receive search response
+        let (response_body, from) = match timeout(RESPONSE_TIMEOUT, search_response).await {
+            Ok(Ok(v)) => v,
+            Ok(Err(err)) => {
+                debug!("error while receiving broadcast response: {err}");
+                continue;
+            },
+            Err(_) => {
+                debug!("timeout while receiving broadcast response");
+                continue;
+            }
+        };
 
-    Ok(Gateway {
-        addr,
-        root_url,
-        control_url,
-        control_schema_url,
-        control_schema,
-        provider: AsyncStd,
-    })
+        let (addr, root_url) = match handle_broadcast_resp(&from, &response_body) {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("error handling broadcast response: {}", e);
+                continue;
+            }
+        };
+
+        let (control_schema_url, control_url) = match get_control_urls(&addr, &root_url).await {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("error getting control URLs: {}", e);
+                continue;
+            }
+        };
+
+        let control_schema = match get_control_schemas(&addr, &control_schema_url).await {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("error getting control schemas: {}", e);
+                continue;
+            }
+        };
+
+        break Ok(Gateway {
+            addr,
+            root_url,
+            control_url,
+            control_schema_url,
+            control_schema,
+            provider: AsyncStd,
+        });
+    }
 }
 
 // Create a new search.
