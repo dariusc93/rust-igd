@@ -41,11 +41,7 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>,
     let max_search_time = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
     let start_search_time = std::time::Instant::now();
 
-    loop {
-        if start_search_time.elapsed() > max_search_time {
-            break Err(SearchError::NoResponseWithinTimeout);
-        }
-
+    while start_search_time.elapsed() < max_search_time {
         let search_response = receive_search_response(&mut socket);
 
         // Receive search response
@@ -85,7 +81,7 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>,
             }
         };
 
-        break Ok(Gateway {
+        return Ok(Gateway {
             addr,
             root_url,
             control_url,
@@ -94,6 +90,8 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>,
             provider: AsyncStd,
         });
     }
+
+    Err(SearchError::NoResponseWithinTimeout)
 }
 
 // Create a new search.
