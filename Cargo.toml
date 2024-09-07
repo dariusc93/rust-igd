@@ -14,7 +14,6 @@ version = "0.15.0"
 all-features = true
 
 [dependencies]
-attohttpc = { version = "0.24", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 http = { version = "0.2", optional = true }
@@ -27,6 +26,7 @@ surf = { version = "2.3.2", optional = true, default-features = false }
 url = "2"
 xmltree = "0.10"
 async-trait = { version = "0.1.72", optional = true }
+minreq = "2.11.0"
 
 [dependencies.hyper]
 default-features = false
