@@ -1,22 +1,23 @@
 //! Tokio abstraction for the aio [`Gateway`].
 
+use async_trait::async_trait;
+use bytes::Bytes;
+use futures::prelude::*;
+use http_body_util::{BodyExt, Empty};
+use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use hyper::Request;
+use hyper_util::client::legacy::Client;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use async_trait::async_trait;
-use futures::prelude::*;
-use hyper::{
-    header::{CONTENT_LENGTH, CONTENT_TYPE},
-    Body, Client, Request,
-};
 
 use tokio::{net::UdpSocket, time::timeout};
 
-use log::debug;
-use crate::common::{messages, parsing, SearchOptions};
-use crate::{aio::Gateway, RequestError};
-use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
+use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
+use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
+use crate::{aio::Gateway, RequestError};
+use log::debug;
 
 /// Tokio provider for the [`Gateway`].
 #[derive(Debug, Clone)]
@@ -25,7 +26,9 @@ pub struct Tokio;
 #[async_trait]
 impl Provider for Tokio {
     async fn send_async(url: &str, action: &str, body: &str) -> Result<String, RequestError> {
-        let client = Client::new();
+        let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
+
+        let body = body.to_string();
 
         let req = Request::builder()
             .uri(url)
@@ -33,10 +36,10 @@ impl Provider for Tokio {
             .header(HEADER_NAME, action)
             .header(CONTENT_TYPE, "text/xml")
             .header(CONTENT_LENGTH, body.len() as u64)
-            .body(Body::from(body.to_string()))?;
+            .body(body)?;
 
         let resp = client.request(req).await?;
-        let body = hyper::body::to_bytes(resp.into_body()).await?;
+        let body = resp.into_body().collect().await?.to_bytes();
         let string = String::from_utf8(body.to_vec())?;
         Ok(string)
     }
@@ -61,7 +64,7 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, Se
             Ok(Err(err)) => {
                 debug!("error while receiving broadcast response: {err}");
                 continue;
-            },
+            }
             Err(_) => {
                 debug!("timeout while receiving broadcast response");
                 continue;
@@ -146,10 +149,9 @@ async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, Stri
     };
 
     debug!("requesting control url from: {uri}");
-    let client = Client::new();
-    let resp = hyper::body::to_bytes(client.get(uri).await?.into_body())
-        .map_err(SearchError::from)
-        .await?;
+    let client: Client<_, Empty<Bytes>> = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
+
+    let resp = client.get(uri).await?.into_body().collect().await?.to_bytes();
 
     debug!("handling control response from: {addr}");
     let c = std::io::Cursor::new(&resp);
@@ -166,10 +168,9 @@ async fn get_control_schemas(
     };
 
     debug!("requesting control schema from: {uri}");
-    let client = Client::new();
-    let resp = hyper::body::to_bytes(client.get(uri).await?.into_body())
-        .map_err(SearchError::from)
-        .await?;
+    let client: Client<_, Empty<Bytes>> = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
+
+    let resp = client.get(uri).await?.into_body().collect().await?.to_bytes();
 
     debug!("handling schema response from: {addr}");
     let c = std::io::Cursor::new(&resp);

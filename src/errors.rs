@@ -27,6 +27,9 @@ pub enum RequestError {
     /// When using the aio feature.
     #[cfg(feature = "aio_tokio")]
     HyperError(hyper::Error),
+    /// When using the aio feature.
+    #[cfg(feature = "aio_tokio")]
+    HyperClientError(hyper_util::client::legacy::Error),
 
     /// When using aio async std feature
     #[cfg(feature = "aio_async_std")]
@@ -95,6 +98,13 @@ impl From<Elapsed> for RequestError {
     }
 }
 
+#[cfg(feature = "aio_tokio")]
+impl From<hyper_util::client::legacy::Error> for RequestError {
+    fn from(err: hyper_util::client::legacy::Error) -> Self {
+        RequestError::HyperClientError(err)
+    }
+}
+
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -107,6 +117,8 @@ impl fmt::Display for RequestError {
             RequestError::SurfError(ref e) => write!(f, "Surf Error: {e}"),
             #[cfg(feature = "aio_tokio")]
             RequestError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
+            #[cfg(feature = "aio_tokio")]
+            RequestError::HyperClientError(ref e) => write!(f, "Hyper Client Error: {e}"),
             #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
             RequestError::HttpError(ref e) => write!(f, "Http  Error: {e}"),
             #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
@@ -127,6 +139,8 @@ impl std::error::Error for RequestError {
             RequestError::SurfError(ref e) => Some(e.as_ref()),
             #[cfg(feature = "aio_tokio")]
             RequestError::HyperError(ref e) => Some(e),
+            #[cfg(feature = "aio_tokio")]
+            RequestError::HyperClientError(ref e) => Some(e),
             #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
             RequestError::HttpError(ref e) => Some(e),
             #[cfg(any(feature = "aio_tokio", feature = "aio_async_std"))]
@@ -340,6 +354,9 @@ pub enum SearchError {
     /// When using the aio feature.
     #[cfg(feature = "aio_tokio")]
     HyperError(hyper::Error),
+    /// When using the aio feature.
+    #[cfg(feature = "aio_tokio")]
+    HyperClientError(hyper_util::client::legacy::Error),
     /// Error parsing URI
     #[cfg(feature = "aio_tokio")]
     InvalidUri(hyper::http::uri::InvalidUri),
@@ -404,6 +421,13 @@ impl From<Elapsed> for SearchError {
     }
 }
 
+#[cfg(feature = "aio_tokio")]
+impl From<hyper_util::client::legacy::Error> for SearchError {
+    fn from(err: hyper_util::client::legacy::Error) -> Self {
+        SearchError::HyperClientError(err)
+    }
+}
+
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -417,6 +441,8 @@ impl fmt::Display for SearchError {
             SearchError::SurfError(ref e) => write!(f, "Surf Error: {e}"),
             #[cfg(feature = "aio_tokio")]
             SearchError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
+            #[cfg(feature = "aio_tokio")]
+            SearchError::HyperClientError(ref e) => write!(f, "Hyper Client Error: {e}"),
             #[cfg(feature = "aio_tokio")]
             SearchError::InvalidUri(ref e) => write!(f, "InvalidUri Error: {e}"),
         }
@@ -436,6 +462,8 @@ impl error::Error for SearchError {
             SearchError::SurfError(ref e) => Some(e.as_ref()),
             #[cfg(feature = "aio_tokio")]
             SearchError::HyperError(ref e) => Some(e),
+            #[cfg(feature = "aio_tokio")]
+            SearchError::HyperClientError(ref e) => Some(e),
             #[cfg(feature = "aio_tokio")]
             SearchError::InvalidUri(ref e) => Some(e),
         }
@@ -457,9 +485,7 @@ impl From<RequestError> for GetGenericPortMappingEntryError {
     fn from(err: RequestError) -> GetGenericPortMappingEntryError {
         match err {
             RequestError::ErrorCode(606, _) => GetGenericPortMappingEntryError::ActionNotAuthorized,
-            RequestError::ErrorCode(713, _) => {
-                GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid
-            }
+            RequestError::ErrorCode(713, _) => GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid,
             other => GetGenericPortMappingEntryError::RequestError(other),
         }
     }

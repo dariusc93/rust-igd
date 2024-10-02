@@ -17,12 +17,13 @@ all-features = true
 attohttpc = { version = "0.24", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
-http = { version = "0.2", optional = true }
+http = { version = "1", optional = true }
 log = "0.4"
 rand = "0.8"
 tokio = { version = "1", optional = true, features = ["net"] }
 async-std = { version = "1", optional = true }
 surf = { version = "2.3.2", optional = true, default-features = false }
+http-body-util = { version = "0.1", optional = true }
 
 url = "2"
 xmltree = "0.10"
@@ -30,9 +31,15 @@ async-trait = { version = "0.1.72", optional = true }
 
 [dependencies.hyper]
 default-features = false
-features = ["client", "http1", "http2", "runtime"]
+features = ["client", "http1", "http2"]
 optional = true
-version = "0.14"
+version = "1"
+
+[dependencies.hyper-util]
+default-features = false
+features = ["client", "client-legacy", "http1", "http2"]
+optional = true
+version = "0.1"
 
 [dev-dependencies]
 simplelog = "0.12"
@@ -40,7 +47,7 @@ tokio = { version = "1", features = ["full"] }
 async-std = { version = "1", features = ["attributes"]}
 
 [features]
-aio_tokio = ["futures", "tokio", "hyper", "bytes", "http", "async-trait"]
+aio_tokio = ["futures", "tokio", "hyper", "hyper-util", "http-body-util", "bytes", "http", "async-trait"]
 aio_async_std = ["futures", "async-std", "surf/h1-client-rustls", "bytes", "http", "async-trait"]
 default = []
 

@@ -10,8 +10,8 @@ use log::debug;
 
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
 use crate::aio::Gateway;
-use crate::common::{messages, parsing, SearchOptions};
 use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
+use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::RequestError;
 
@@ -50,7 +50,7 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>,
             Ok(Err(err)) => {
                 debug!("error while receiving broadcast response: {err}");
                 continue;
-            },
+            }
             Err(_) => {
                 debug!("timeout while receiving broadcast response");
                 continue;
