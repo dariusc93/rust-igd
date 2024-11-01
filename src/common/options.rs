@@ -29,6 +29,8 @@ pub struct SearchOptions {
     pub broadcast_address: SocketAddr,
     /// Timeout for a search iteration (defaults to 10s)
     pub timeout: Option<Duration>,
+    /// Timeout for a single search response (defaults to 5s)
+    pub single_search_timeout: Option<Duration>,
 }
 
 impl Default for SearchOptions {
@@ -37,6 +39,7 @@ impl Default for SearchOptions {
             bind_addr: (IpAddr::from([0, 0, 0, 0]), 0).into(),
             broadcast_address: "239.255.255.250:1900".parse().unwrap(),
             timeout: Some(DEFAULT_TIMEOUT),
+            single_search_timeout: Some(RESPONSE_TIMEOUT),
         }
     }
 }

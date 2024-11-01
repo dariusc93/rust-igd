@@ -33,19 +33,29 @@ impl Provider for AsyncStd {
 
 /// Search for a gateway with the provided options.
 pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>, SearchError> {
+    let search_timeout = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    match timeout(search_timeout, search_gateway_inner(options)).await {
+        Ok(Ok(gateway)) => Ok(gateway),
+        Ok(Err(err)) => Err(err),
+        Err(_err) => {
+            // Timeout
+            Err(SearchError::NoResponseWithinTimeout)
+        }
+    }
+}
+async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<AsyncStd>, SearchError> {
     // Create socket for future calls.
     let mut socket = UdpSocket::bind(&options.bind_addr).await?;
 
     send_search_request(&mut socket, options.broadcast_address).await?;
 
-    let max_search_time = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
-    let start_search_time = std::time::Instant::now();
+    let response_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
 
-    while start_search_time.elapsed() < max_search_time {
+    loop {
         let search_response = receive_search_response(&mut socket);
 
         // Receive search response
-        let (response_body, from) = match timeout(RESPONSE_TIMEOUT, search_response).await {
+        let (response_body, from) = match timeout(response_timeout, search_response).await {
             Ok(Ok(v)) => v,
             Ok(Err(err)) => {
                 debug!("error while receiving broadcast response: {err}");
@@ -90,8 +100,6 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<AsyncStd>,
             provider: AsyncStd,
         });
     }
-
-    Err(SearchError::NoResponseWithinTimeout)
 }
 
 // Create a new search.
