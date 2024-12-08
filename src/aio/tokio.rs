@@ -47,7 +47,7 @@ impl Provider for Tokio {
 
 /// Search for a gateway with the provided options.
 pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, SearchError> {
-    let search_timeout = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let search_timeout = options.timeout().unwrap_or(DEFAULT_TIMEOUT);
     match timeout(search_timeout, search_gateway_inner(options)).await {
         Ok(Ok(gateway)) => Ok(gateway),
         Ok(Err(err)) => Err(err),
@@ -60,10 +60,10 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, Se
 
 async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, SearchError> {
     // Create socket for future calls
-    let mut socket = UdpSocket::bind(&options.bind_addr).await?;
+    let mut socket = UdpSocket::bind(&options.bind_addr()).await?;
 
-    send_search_request(&mut socket, options.broadcast_address).await?;
-    let response_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
+    send_search_request(&mut socket, options.broadcast_address()).await?;
+    let response_timeout = options.single_search_timeout().unwrap_or(RESPONSE_TIMEOUT);
 
     loop {
         let search_response = receive_search_response(&mut socket);
