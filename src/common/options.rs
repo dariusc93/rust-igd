@@ -17,10 +17,7 @@ pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// ```
 /// # use std::time::Duration;
 /// # use igd_next::SearchOptions;
-/// let opts = SearchOptions {
-///     timeout: Some(Duration::from_secs(60)),
-///     ..Default::default()
-/// };
+/// let opts = SearchOptions::default().set_timeout(Duration::from_secs(10));
 /// ```
 pub struct SearchOptions {
     /// Bind address for UDP socket (defaults to all `0.0.0.0`)
