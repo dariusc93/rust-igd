@@ -24,13 +24,61 @@ pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// ```
 pub struct SearchOptions {
     /// Bind address for UDP socket (defaults to all `0.0.0.0`)
-    pub bind_addr: SocketAddr,
+    bind_addr: SocketAddr,
     /// Broadcast address for discovery packets (defaults to `239.255.255.250:1900`)
-    pub broadcast_address: SocketAddr,
+    broadcast_address: SocketAddr,
     /// Timeout for a search iteration (defaults to 10s)
-    pub timeout: Option<Duration>,
+    timeout: Option<Duration>,
     /// Timeout for a single search response (defaults to 5s)
-    pub single_search_timeout: Option<Duration>,
+    single_search_timeout: Option<Duration>,
+}
+
+impl SearchOptions {
+    /// Set bind address for UDP socket (defaults to all `0.0.0.0`)
+    pub fn set_bind_addr(mut self, bind_addr: impl Into<SocketAddr>) -> Self {
+        self.bind_addr = bind_addr.into();
+        self
+    }
+
+    /// Set broadcast address for delivery packets  (defaults to `239.255.255.250:1900`)
+    pub fn set_broadcast_address(mut self, broadcast_address: impl Into<SocketAddr>) -> Self {
+        self.broadcast_address = broadcast_address.into();
+        self
+    }
+
+    /// Set timeout for a search iteration (defaults to 10s)
+    pub fn set_timeout(mut self, timeout: impl Into<Option<Duration>>) -> Self {
+        self.timeout = timeout.into();
+        self
+    }
+
+    /// Set timeout for a single search response (defaults to 5s)
+    pub fn set_single_search_timeout(mut self, single_search_timeout: impl Into<Option<Duration>>) -> Self {
+        self.single_search_timeout = single_search_timeout.into();
+        self
+    }
+}
+
+impl SearchOptions {
+    /// Bind address for UDP socket (defaults to all `0.0.0.0`)
+    pub fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
+    }
+
+    /// Broadcast address for discovery packets (defaults to `239.255.255.250:1900`)
+    pub fn broadcast_address(&self) -> SocketAddr {
+        self.broadcast_address
+    }
+
+    /// Timeout for a search iteration (defaults to 10s)
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Timeout for a single search response (defaults to 5s)
+    pub fn single_search_timeout(&self) -> Option<Duration> {
+        self.single_search_timeout
+    }
 }
 
 impl Default for SearchOptions {
