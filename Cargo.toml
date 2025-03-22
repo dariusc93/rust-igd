@@ -19,7 +19,7 @@ bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 http = { version = "1", optional = true }
 log = "0.4"
-rand = "0.8"
+rand = "0.9.0"
 tokio = { version = "1", optional = true, features = ["net"] }
 async-std = { version = "1", optional = true }
 surf = { version = "2.3.2", optional = true, default-features = false }
