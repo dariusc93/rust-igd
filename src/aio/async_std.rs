@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use async_std::{future::timeout, net::UdpSocket};
-use async_trait::async_trait;
 use futures::prelude::*;
 use log::debug;
 
@@ -19,7 +18,6 @@ use crate::RequestError;
 #[derive(Debug, Clone)]
 pub struct AsyncStd;
 
-#[async_trait]
 impl Provider for AsyncStd {
     async fn send_async(url: &str, action: &str, body: &str) -> Result<String, RequestError> {
         Ok(surf::post(url)
