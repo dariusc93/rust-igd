@@ -8,7 +8,7 @@ license = "MIT"
 name = "igd-next"
 readme = "README.md"
 repository = "https://github.com/dariusc93/rust-igd"
-version = "0.16.0"
+version = "0.16.1"
 
 [package.metadata.docs.rs]
 all-features = true
