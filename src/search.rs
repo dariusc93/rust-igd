@@ -29,14 +29,14 @@ use crate::gateway::Gateway;
 /// ```
 pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
     let start = Instant::now();
-    let max_time = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let max_time = options.timeout().unwrap_or(DEFAULT_TIMEOUT);
 
-    let socket = UdpSocket::bind(options.bind_addr)?;
+    let socket = UdpSocket::bind(options.bind_addr())?;
 
-    let read_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
+    let read_timeout = options.single_search_timeout().unwrap_or(RESPONSE_TIMEOUT);
     socket.set_read_timeout(Some(read_timeout))?;
 
-    socket.send_to(messages::SEARCH_REQUEST.as_bytes(), options.broadcast_address)?;
+    socket.send_to(messages::SEARCH_REQUEST.as_bytes(), options.broadcast_address())?;
 
     while start.elapsed() < max_time {
         let mut buf = [0u8; 1500];
