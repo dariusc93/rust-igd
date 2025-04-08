@@ -1,6 +1,5 @@
 //! Tokio abstraction for the aio [`Gateway`].
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::prelude::*;
 use http_body_util::{BodyExt, Empty};
@@ -23,7 +22,6 @@ use log::debug;
 #[derive(Debug, Clone)]
 pub struct Tokio;
 
-#[async_trait]
 impl Provider for Tokio {
     async fn send_async(url: &str, action: &str, body: &str) -> Result<String, RequestError> {
         let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
