@@ -20,5 +20,5 @@ pub(crate) const HEADER_NAME: &str = "SOAPAction";
 /// Trait to allow abstracting over `tokio` and `async-std`.
 pub trait Provider {
     /// Send an async request over the executor.
-    fn send_async(url: &str, action: &str, body: &str) -> impl Future<Output = Result<String, RequestError>>;
+    fn send_async(url: &str, action: &str, body: &str) -> impl Future<Output = Result<String, RequestError>> + Send;
 }
