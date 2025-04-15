@@ -5,9 +5,6 @@ mod gateway;
 #[cfg(feature = "aio_tokio")]
 pub mod tokio;
 
-#[cfg(feature = "aio_async_std")]
-pub mod async_std;
-
 use async_trait::async_trait;
 
 use crate::RequestError;
