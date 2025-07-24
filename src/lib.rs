@@ -17,7 +17,7 @@ pub use self::gateway::Gateway;
 // search of gateway
 pub use self::search::search_gateway;
 
-#[cfg(any(feature = "aio_tokio"))]
+#[cfg(feature = "aio_tokio")]
 pub mod aio;
 mod common;
 mod errors;

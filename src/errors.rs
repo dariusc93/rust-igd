@@ -2,7 +2,7 @@ use std::error;
 use std::fmt;
 use std::io;
 use std::str;
-#[cfg(any(feature = "aio_tokio"))]
+#[cfg(feature = "aio_tokio")]
 use std::string::FromUtf8Error;
 
 #[cfg(feature = "aio_tokio")]
@@ -29,11 +29,11 @@ pub enum RequestError {
     #[cfg(feature = "aio_tokio")]
     HyperClientError(hyper_util::client::legacy::Error),
 
-    #[cfg(any(feature = "aio_tokio"))]
+    #[cfg(feature = "aio_tokio")]
     /// http crate error type
     HttpError(http::Error),
 
-    #[cfg(any(feature = "aio_tokio"))]
+    #[cfg(feature = "aio_tokio")]
     /// Error parsing HTTP body
     Utf8Error(FromUtf8Error),
 }
@@ -50,7 +50,7 @@ impl From<io::Error> for RequestError {
     }
 }
 
-#[cfg(any(feature = "aio_tokio"))]
+#[cfg(feature = "aio_tokio")]
 impl From<http::Error> for RequestError {
     fn from(err: http::Error) -> RequestError {
         RequestError::HttpError(err)
@@ -64,7 +64,7 @@ impl From<hyper::Error> for RequestError {
     }
 }
 
-#[cfg(any(feature = "aio_tokio"))]
+#[cfg(feature = "aio_tokio")]
 impl From<FromUtf8Error> for RequestError {
     fn from(err: FromUtf8Error) -> RequestError {
         RequestError::Utf8Error(err)
@@ -97,9 +97,9 @@ impl fmt::Display for RequestError {
             RequestError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
             #[cfg(feature = "aio_tokio")]
             RequestError::HyperClientError(ref e) => write!(f, "Hyper Client Error: {e}"),
-            #[cfg(any(feature = "aio_tokio"))]
+            #[cfg(feature = "aio_tokio")]
             RequestError::HttpError(ref e) => write!(f, "Http  Error: {e}"),
-            #[cfg(any(feature = "aio_tokio"))]
+            #[cfg(feature = "aio_tokio")]
             RequestError::Utf8Error(ref e) => write!(f, "Utf8Error Error: {e}"),
         }
     }
@@ -117,9 +117,9 @@ impl std::error::Error for RequestError {
             RequestError::HyperError(ref e) => Some(e),
             #[cfg(feature = "aio_tokio")]
             RequestError::HyperClientError(ref e) => Some(e),
-            #[cfg(any(feature = "aio_tokio"))]
+            #[cfg(feature = "aio_tokio")]
             RequestError::HttpError(ref e) => Some(e),
-            #[cfg(any(feature = "aio_tokio"))]
+            #[cfg(feature = "aio_tokio")]
             RequestError::Utf8Error(ref e) => Some(e),
         }
     }
