@@ -5,16 +5,17 @@ edition = "2021"
 homepage = "https://github.com/dariusc93/rust-igd"
 keywords = ["igd", "upnp", "tokio"]
 license = "MIT"
+rust-version = "1.75"
 name = "igd-next"
 readme = "README.md"
 repository = "https://github.com/dariusc93/rust-igd"
-version = "0.16.1"
+version = "0.16.2"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-attohttpc = { version = "0.24", default-features = false }
+attohttpc = { version = "0.30.0", default-features = false }
 bytes = { version = "1", optional = true }
 futures = { version = "0.3", optional = true }
 http = { version = "1", optional = true }
@@ -25,7 +26,6 @@ http-body-util = { version = "0.1", optional = true }
 
 url = "2"
 xmltree = "0.10"
-async-trait = { version = "0.1.72", optional = true }
 
 [dependencies.hyper]
 default-features = false
@@ -44,7 +44,7 @@ simplelog = "0.12"
 tokio = { version = "1", features = ["full"] }
 
 [features]
-aio_tokio = ["futures", "tokio", "hyper", "hyper-util", "http-body-util", "bytes", "http", "async-trait"]
+aio_tokio = ["futures", "tokio", "hyper", "hyper-util", "http-body-util", "bytes", "http"]
 default = []
 
 [[example]]
