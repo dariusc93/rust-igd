@@ -14,7 +14,7 @@ pub use self::gateway::Gateway;
 pub(crate) const MAX_RESPONSE_SIZE: usize = 1500;
 pub(crate) const HEADER_NAME: &str = "SOAPAction";
 
-/// Trait to allow abstracting over `tokio` and `async-std`.
+/// Trait to allow abstracting over `tokio`.
 #[async_trait]
 pub trait Provider {
     /// Send an async request over the executor.
