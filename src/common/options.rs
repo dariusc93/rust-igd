@@ -1,5 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+use crate::GatewayIpVersion;
 
 /// Default timeout for a gateway search.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,6 +32,8 @@ pub struct SearchOptions {
     pub timeout: Option<Duration>,
     /// Timeout for a single search response (defaults to 5s)
     pub single_search_timeout: Option<Duration>,
+    /// Search for IPv4/IPv6/Both Gateway (defaults to IPv4)
+    pub gateway_ip_version: GatewayIpVersion,
 }
 
 impl Default for SearchOptions {
@@ -40,6 +43,7 @@ impl Default for SearchOptions {
             broadcast_address: "239.255.255.250:1900".parse().unwrap(),
             timeout: Some(DEFAULT_TIMEOUT),
             single_search_timeout: Some(RESPONSE_TIMEOUT),
+            gateway_ip_version: GatewayIpVersion::V4,
         }
     }
 }

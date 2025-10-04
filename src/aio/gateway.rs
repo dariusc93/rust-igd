@@ -278,7 +278,10 @@ impl<P: Provider> Gateway<P> {
 
 impl<P> fmt::Display for Gateway<P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "http://{}{}", self.addr, self.control_url)
+        match self.addr {
+            SocketAddr::V4(_) => write!(f, "http://{}{}", self.addr, self.control_url),
+            SocketAddr::V6(_) => write!(f, "http://[{}]:{}{}", self.addr.ip(), self.addr.port(), self.control_url),
+        }
     }
 }
 
