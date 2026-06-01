@@ -27,7 +27,7 @@ mod search;
 use std::fmt;
 
 /// Represents the protocols available for port mapping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PortMappingProtocol {
     /// TCP protocol
     TCP,
