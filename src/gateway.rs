@@ -25,8 +25,10 @@ pub struct Gateway {
 
 impl Gateway {
     fn perform_request(&self, header: &str, body: &str, ok: &str) -> RequestResult {
-        let url = format!("http://{}{}", self.addr, self.control_url);
-
+        let url = match self.addr {
+            SocketAddr::V4(_) => format!("http://{}{}", self.addr, self.control_url),
+            SocketAddr::V6(_) => format!("http://[{}]:{}{}", self.addr.ip(), self.addr.port(), self.control_url),
+        };
         let response = match RequestBuilder::try_new(Method::POST, url) {
             Ok(request_builder) => request_builder
                 .header("SOAPAction", header)
@@ -248,6 +250,9 @@ impl Gateway {
 
 impl fmt::Display for Gateway {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "http://{}{}", self.addr, self.control_url)
+        match self.addr {
+            SocketAddr::V4(_) => write!(f, "http://{}{}", self.addr, self.control_url),
+            SocketAddr::V6(_) => write!(f, "http://[{}]:{}{}", self.addr.ip(), self.addr.port(), self.control_url),
+        }
     }
 }
