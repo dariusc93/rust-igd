@@ -5,23 +5,33 @@
 //! You can then communicate with the device via this object.
 
 // data structures
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::common::parsing::PortMappingEntry;
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::common::SearchOptions;
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::errors::{
     AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError, RemovePortError, RequestError,
     SearchError,
 };
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::errors::{Error, Result};
+#[cfg(feature = "io_sync")]
 pub use self::gateway::Gateway;
 
 // search of gateway
+#[cfg(feature = "io_sync")]
 pub use self::search::search_gateway;
 
 #[cfg(feature = "aio_tokio")]
 pub mod aio;
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 mod common;
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 mod errors;
+#[cfg(feature = "io_sync")]
 mod gateway;
+#[cfg(feature = "io_sync")]
 mod search;
 
 use std::fmt;

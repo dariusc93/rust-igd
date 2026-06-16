@@ -9,5 +9,11 @@ Contributions are welcome! This is pretty delicate to test, please submit an iss
 * [Repository](https://github.com/dariusc93/rust-igd)
 * [Crates.io](https://crates.io/crates/igd-next)
 
+## Feature flags
+
+By default the crate uses synchronous IO, using [`attohttpc`](https://crates.io/crates/attohttpc/) as its HTTP client.
+The crate also ships an async implementation that uses `tokio` and `hyper`. To use it, disable `default-features` and 
+enable the `aio_tokio` feature.
+
 ## License
 MIT
