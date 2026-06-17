@@ -8,10 +8,10 @@ use std::string::FromUtf8Error;
 #[cfg(feature = "aio_tokio")]
 use tokio::time::error::Elapsed;
 
-
 /// Errors that can occur when sending the request to the gateway.
 #[derive(Debug)]
 pub enum RequestError {
+    #[cfg(feature = "io_sync")]
     /// attohttp error
     AttoHttpError(attohttpc::Error),
     /// IO Error
@@ -38,6 +38,7 @@ pub enum RequestError {
     Utf8Error(FromUtf8Error),
 }
 
+#[cfg(feature = "io_sync")]
 impl From<attohttpc::Error> for RequestError {
     fn from(err: attohttpc::Error) -> RequestError {
         RequestError::AttoHttpError(err)
@@ -88,6 +89,7 @@ impl From<hyper_util::client::legacy::Error> for RequestError {
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            #[cfg(feature = "io_sync")]
             RequestError::AttoHttpError(ref e) => write!(f, "HTTP error {e}"),
             RequestError::InvalidResponse(ref e) => write!(f, "Invalid response from gateway: {e}"),
             RequestError::IoError(ref e) => write!(f, "IO error. {e}"),
@@ -108,6 +110,7 @@ impl fmt::Display for RequestError {
 impl std::error::Error for RequestError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
+            #[cfg(feature = "io_sync")]
             RequestError::AttoHttpError(ref e) => Some(e),
             RequestError::InvalidResponse(..) => None,
             RequestError::IoError(ref e) => Some(e),
@@ -313,6 +316,7 @@ impl std::error::Error for AddPortError {
 #[derive(Debug)]
 pub enum SearchError {
     /// Http/Hyper error
+    #[cfg(feature = "io_sync")]
     HttpError(attohttpc::Error),
     /// Unable to process the response
     InvalidResponse,
@@ -335,6 +339,7 @@ pub enum SearchError {
     InvalidUri(hyper::http::uri::InvalidUri),
 }
 
+#[cfg(feature = "io_sync")]
 impl From<attohttpc::Error> for SearchError {
     fn from(err: attohttpc::Error) -> SearchError {
         SearchError::HttpError(err)
@@ -390,6 +395,7 @@ impl From<hyper_util::client::legacy::Error> for SearchError {
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
+            #[cfg(feature = "io_sync")]
             SearchError::HttpError(ref e) => write!(f, "HTTP error {e}"),
             SearchError::InvalidResponse => write!(f, "Invalid response"),
             SearchError::NoResponseWithinTimeout => write!(f, "No response within timeout"),
@@ -409,6 +415,7 @@ impl fmt::Display for SearchError {
 impl error::Error for SearchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match *self {
+            #[cfg(feature = "io_sync")]
             SearchError::HttpError(ref e) => Some(e),
             SearchError::InvalidResponse => None,
             SearchError::NoResponseWithinTimeout => None,
