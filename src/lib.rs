@@ -45,6 +45,16 @@ pub enum PortMappingProtocol {
     UDP,
 }
 
+/// IP version of gateways
+pub enum GatewayIpVersion {
+    /// IPv4 gateway
+    V4,
+    /// IPv6 gateway
+    V6,
+    /// Both IPv4 and IPv6 gateways
+    Both,
+}
+
 impl fmt::Display for PortMappingProtocol {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(

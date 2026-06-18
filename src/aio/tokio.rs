@@ -13,6 +13,7 @@ use tokio::{net::UdpSocket, time::timeout};
 
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
 use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
+use crate::GatewayIpVersion;
 use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::{aio::Gateway, RequestError};
@@ -80,7 +81,11 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
         };
 
         let (addr, root_url) = match handle_broadcast_resp(&from, &response_body) {
-            Ok(v) => v,
+            Ok((addr, root_url)) => match options.gateway_ip_version {
+                GatewayIpVersion::V4 if addr.is_ipv6() => continue,
+                GatewayIpVersion::V6 if addr.is_ipv4() => continue,
+                _ => (addr, root_url),
+            },
             Err(e) => {
                 debug!("error handling broadcast response: {}", e);
                 continue;
@@ -149,7 +154,12 @@ fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, 
 }
 
 async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, String), SearchError> {
-    let uri = match format!("http://{addr}{path}").parse() {
+    let host = match addr {
+        SocketAddr::V4(_) => format!("{}:{}", addr.ip(), addr.port()),
+        SocketAddr::V6(_) => format!("[{}]:{}", addr.ip(), addr.port()),
+    };
+
+    let uri = match format!("http://{host}{path}").parse() {
         Ok(uri) => uri,
         Err(err) => return Err(SearchError::from(err)),
     };
@@ -168,7 +178,12 @@ async fn get_control_schemas(
     addr: &SocketAddr,
     control_schema_url: &str,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let uri = match format!("http://{addr}{control_schema_url}").parse() {
+    let host = match addr {
+        SocketAddr::V4(_) => format!("{}:{}", addr.ip(), addr.port()),
+        SocketAddr::V6(_) => format!("[{}]:{}", addr.ip(), addr.port()),
+    };
+    
+    let uri = match format!("http://{host}{control_schema_url}").parse() {
         Ok(uri) => uri,
         Err(err) => return Err(SearchError::from(err)),
     };

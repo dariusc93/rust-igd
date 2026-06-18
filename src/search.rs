@@ -10,6 +10,7 @@ use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
 use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
+use crate::GatewayIpVersion;
 
 /// Search gateway, using the given `SearchOptions`.
 ///
@@ -47,6 +48,11 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
         let text = str::from_utf8(&buf[..read])?;
 
         let (addr, root_url) = parsing::parse_search_result(text)?;
+        match options.gateway_ip_version {
+            GatewayIpVersion::V4 if addr.is_ipv6() => continue,
+            GatewayIpVersion::V6 if addr.is_ipv4() => continue,
+            _ => {}
+        }
 
         let (control_schema_url, control_url) = match get_control_urls(&addr, &root_url, max_time - start.elapsed()) {
             Ok(o) => o,
@@ -83,7 +89,12 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 }
 
 fn get_control_urls(addr: &SocketAddr, root_url: &str, timeout: Duration) -> Result<(String, String), SearchError> {
-    let url = format!("http://{}:{}{}", addr.ip(), addr.port(), root_url);
+    let url = match addr {
+        SocketAddr::V4(_) => format!("http://{}:{}{}", addr.ip(), addr.port(), root_url),
+        SocketAddr::V6(_) => format!("http://[{}]:{}{}", addr.ip(), addr.port(), root_url),
+        
+    };
+    
     match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => {
             let response = request_builder.timeout(timeout).send()?;
@@ -98,7 +109,11 @@ fn get_schemas(
     control_schema_url: &str,
     timeout: Duration,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let url = format!("http://{}:{}{}", addr.ip(), addr.port(), control_schema_url);
+    let url = match addr {
+        SocketAddr::V4(_) => format!("http://{}:{}{}", addr.ip(), addr.port(), control_schema_url),
+        SocketAddr::V6(_) => format!("http://[{}]:{}{}", addr.ip(), addr.port(), control_schema_url),
+    };
+
     match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => {
             let response = request_builder.timeout(timeout).send()?;
