@@ -21,15 +21,19 @@ pub struct Gateway {
     pub control_schema_url: String,
     /// Control schema for all actions
     pub control_schema: HashMap<String, Vec<String>>,
+    /// Service type of the gateway's WAN connection service (e.g.
+    /// `urn:schemas-upnp-org:service:WANIPConnection:1`)
+    pub service_type: String,
 }
 
 impl Gateway {
-    fn perform_request(&self, header: &str, body: &str, ok: &str) -> RequestResult {
+    fn perform_request(&self, action: &str, body: &str, ok: &str) -> RequestResult {
         let url = format!("http://{}{}", self.addr, self.control_url);
+        let header = messages::soap_action(&self.service_type, action);
 
         let response = match RequestBuilder::try_new(Method::POST, url) {
             Ok(request_builder) => request_builder
-                .header("SOAPAction", header)
+                .header("SOAPAction", header.as_str())
                 .header("Content-Type", "text/xml")
                 .text(body)
                 .send()?,
@@ -42,8 +46,8 @@ impl Gateway {
     /// Get the external IP address of the gateway.
     pub fn get_external_ip(&self) -> Result<IpAddr, GetExternalIpError> {
         parsing::parse_get_external_ip_response(self.perform_request(
-            messages::GET_EXTERNAL_IP_HEADER,
-            &messages::format_get_external_ip_message(),
+            messages::GET_EXTERNAL_IP_ACTION,
+            &messages::format_get_external_ip_message(&self.service_type),
             "GetExternalIPAddressResponse",
         ))
     }
@@ -99,8 +103,9 @@ impl Gateway {
             let external_port = common::random_port();
 
             parsing::parse_add_any_port_mapping_response(self.perform_request(
-                messages::ADD_ANY_PORT_MAPPING_HEADER,
+                messages::ADD_ANY_PORT_MAPPING_ACTION,
                 &messages::format_add_any_port_mapping_message(
+                    &self.service_type,
                     schema,
                     protocol,
                     external_port,
@@ -174,8 +179,9 @@ impl Gateway {
         description: &str,
     ) -> Result<(), RequestError> {
         self.perform_request(
-            messages::ADD_PORT_MAPPING_HEADER,
+            messages::ADD_PORT_MAPPING_ACTION,
             &messages::format_add_port_mapping_message(
+                &self.service_type,
                 self.control_schema
                     .get("AddPortMapping")
                     .ok_or_else(|| RequestError::UnsupportedAction("AddPortMapping".to_string()))?,
@@ -217,8 +223,9 @@ impl Gateway {
     /// Remove a port mapping.
     pub fn remove_port(&self, protocol: PortMappingProtocol, external_port: u16) -> Result<(), RemovePortError> {
         parsing::parse_delete_port_mapping_response(self.perform_request(
-            messages::DELETE_PORT_MAPPING_HEADER,
+            messages::DELETE_PORT_MAPPING_ACTION,
             &messages::format_delete_port_message(
+                &self.service_type,
                 self.control_schema.get("DeletePortMapping").ok_or_else(|| {
                     RemovePortError::RequestError(RequestError::UnsupportedAction("DeletePortMapping".to_string()))
                 })?,
@@ -239,8 +246,8 @@ impl Gateway {
         index: u32,
     ) -> Result<parsing::PortMappingEntry, errors::GetGenericPortMappingEntryError> {
         parsing::parse_get_generic_port_mapping_entry(self.perform_request(
-            messages::GET_GENERIC_PORT_MAPPING_ENTRY,
-            &messages::formate_get_generic_port_mapping_entry_message(index),
+            messages::GET_GENERIC_PORT_MAPPING_ENTRY_ACTION,
+            &messages::formate_get_generic_port_mapping_entry_message(&self.service_type, index),
             "GetGenericPortMappingEntryResponse",
         ))
     }

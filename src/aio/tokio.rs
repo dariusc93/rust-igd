@@ -87,7 +87,7 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
             }
         };
 
-        let (control_schema_url, control_url) = match get_control_urls(&addr, &root_url).await {
+        let (service_type, control_schema_url, control_url) = match get_control_urls(&addr, &root_url).await {
             Ok(v) => v,
             Err(e) => {
                 debug!("error getting control URLs: {}", e);
@@ -109,6 +109,7 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
             control_url,
             control_schema_url,
             control_schema,
+            service_type,
             provider: Tokio,
         });
     }
@@ -148,7 +149,7 @@ fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, 
     Ok((addr, root_url))
 }
 
-async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, String), SearchError> {
+async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, String, String), SearchError> {
     let uri = match format!("http://{addr}{path}").parse() {
         Ok(uri) => uri,
         Err(err) => return Err(SearchError::from(err)),

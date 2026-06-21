@@ -34,7 +34,9 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
     Err(InvalidResponse)
 }
 
-pub fn parse_control_urls<R>(resp: R) -> Result<(String, String), SearchError>
+/// Parse the device description, returning `(service_type, control_schema_url, control_url)`
+/// for the first supported WAN connection service found.
+pub fn parse_control_urls<R>(resp: R) -> Result<(String, String, String), SearchError>
 where
     R: io::Read,
 {
@@ -52,7 +54,7 @@ where
     urls.next().ok_or(SearchError::InvalidResponse)
 }
 
-fn parse_device(device: &Element) -> Option<(String, String)> {
+fn parse_device(device: &Element) -> Option<(String, String, String)> {
     let services = device.get_child("serviceList").and_then(|service_list| {
         service_list
             .children
@@ -71,7 +73,7 @@ fn parse_device(device: &Element) -> Option<(String, String)> {
     services.or(devices)
 }
 
-fn parse_device_list(device_list: &Element) -> Option<(String, String)> {
+fn parse_device_list(device_list: &Element) -> Option<(String, String, String)> {
     device_list
         .children
         .iter()
@@ -86,7 +88,7 @@ fn parse_device_list(device_list: &Element) -> Option<(String, String)> {
         .next()
 }
 
-fn parse_service(service: &Element) -> Option<(String, String)> {
+fn parse_service(service: &Element) -> Option<(String, String, String)> {
     let service_type = service.get_child("serviceType")?;
     let service_type = service_type
         .get_text()
@@ -103,6 +105,7 @@ fn parse_service(service: &Element) -> Option<(String, String)> {
         let control_url = service.get_child("controlURL");
         if let (Some(scpd_url), Some(control_url)) = (scpd_url, control_url) {
             Some((
+                service_type,
                 scpd_url.get_text().map(|s| s.into_owned()).unwrap_or_else(|| "".into()),
                 control_url
                     .get_text()
@@ -494,7 +497,8 @@ fn test_parse_device1() {
    </device>
 </root>"#;
 
-    let (control_schema_url, control_url) = parse_control_urls(text.as_bytes()).unwrap();
+    let (service_type, control_schema_url, control_url) = parse_control_urls(text.as_bytes()).unwrap();
+    assert_eq!(service_type, "urn:schemas-upnp-org:service:WANIPConnection:1");
     assert_eq!(control_url, "/ctl/IPConn");
     assert_eq!(control_schema_url, "/WANIPCn.xml");
 }
@@ -601,7 +605,8 @@ fn test_parse_device2() {
     "#;
     let result = parse_control_urls(text.as_bytes());
     assert!(result.is_ok());
-    let (control_schema_url, control_url) = result.unwrap();
+    let (service_type, control_schema_url, control_url) = result.unwrap();
+    assert_eq!(service_type, "urn:schemas-upnp-org:service:WANIPConnection:1");
     assert_eq!(control_url, "/igdupnp/control/WANIPConn1");
     assert_eq!(control_schema_url, "/igdconnSCPD.xml");
 }
@@ -688,7 +693,43 @@ fn test_parse_device3() {
 </device>
 </root>"#;
 
-    let (control_schema_url, control_url) = parse_control_urls(text.as_bytes()).unwrap();
+    let (service_type, control_schema_url, control_url) = parse_control_urls(text.as_bytes()).unwrap();
+    assert_eq!(service_type, "urn:schemas-upnp-org:service:WANIPConnection:1");
     assert_eq!(control_url, "/upnp/control/WANIPConn1");
     assert_eq!(control_schema_url, "/332b484d/wanipconnSCPD.xml");
+}
+
+#[test]
+fn test_parse_device_pppconnection() {
+    // A DSL/PPP gateway that only exposes WANPPPConnection:1 (not WANIPConnection).
+    let text = r#"<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+   <device>
+      <deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+      <deviceList>
+         <device>
+            <deviceType>urn:schemas-upnp-org:device:WANDevice:1</deviceType>
+            <deviceList>
+               <device>
+                  <deviceType>urn:schemas-upnp-org:device:WANConnectionDevice:1</deviceType>
+                  <serviceList>
+                     <service>
+                        <serviceType>urn:schemas-upnp-org:service:WANPPPConnection:1</serviceType>
+                        <serviceId>urn:upnp-org:serviceId:WANPPPConn1</serviceId>
+                        <controlURL>/ctl/PPPConn</controlURL>
+                        <eventSubURL>/evt/PPPConn</eventSubURL>
+                        <SCPDURL>/WANPPPCn.xml</SCPDURL>
+                     </service>
+                  </serviceList>
+               </device>
+            </deviceList>
+         </device>
+      </deviceList>
+   </device>
+</root>"#;
+
+    let (service_type, control_schema_url, control_url) = parse_control_urls(text.as_bytes()).unwrap();
+    assert_eq!(service_type, "urn:schemas-upnp-org:service:WANPPPConnection:1");
+    assert_eq!(control_url, "/ctl/PPPConn");
+    assert_eq!(control_schema_url, "/WANPPPCn.xml");
 }
