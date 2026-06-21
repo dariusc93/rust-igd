@@ -1,5 +1,3 @@
-use std::error;
-use std::fmt;
 use std::io;
 use std::str;
 #[cfg(feature = "aio_tokio")]
@@ -9,67 +7,42 @@ use std::string::FromUtf8Error;
 use tokio::time::error::Elapsed;
 
 /// Errors that can occur when sending the request to the gateway.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum RequestError {
     #[cfg(feature = "io_sync")]
+    #[error("HTTP error {0}")]
     /// attohttp error
-    AttoHttpError(attohttpc::Error),
+    AttoHttpError(#[from] attohttpc::Error),
+    #[error("IO error: {0:?}")]
     /// IO Error
-    IoError(io::Error),
+    IoError(#[from] io::Error),
+    #[error("Invalid response from gateway: {}", _0)]
     /// The response from the gateway could not be parsed.
     InvalidResponse(String),
     /// The gateway returned an unhandled error code and description.
+    #[error("Gateway response error {}: {}", _0, _1)]
     ErrorCode(u16, String),
+    #[error("Action is not supported by the gateway: {}", _0)]
     /// Action is not supported by the gateway
     UnsupportedAction(String),
     /// When using the aio feature.
     #[cfg(feature = "aio_tokio")]
-    HyperError(hyper::Error),
+    #[error("Hyper Error: {0}")]
+    HyperError(#[from] hyper::Error),
     /// When using the aio feature.
     #[cfg(feature = "aio_tokio")]
-    HyperClientError(hyper_util::client::legacy::Error),
+    #[error("Hyper Client Error: {0}")]
+    HyperClientError(#[from] hyper_util::client::legacy::Error),
 
-    #[cfg(feature = "aio_tokio")]
     /// http crate error type
-    HttpError(http::Error),
-
     #[cfg(feature = "aio_tokio")]
+    #[error("Http Error: {0}")]
+    HttpError(#[from] http::Error),
+
     /// Error parsing HTTP body
-    Utf8Error(FromUtf8Error),
-}
-
-#[cfg(feature = "io_sync")]
-impl From<attohttpc::Error> for RequestError {
-    fn from(err: attohttpc::Error) -> RequestError {
-        RequestError::AttoHttpError(err)
-    }
-}
-
-impl From<io::Error> for RequestError {
-    fn from(err: io::Error) -> RequestError {
-        RequestError::IoError(err)
-    }
-}
-
-#[cfg(feature = "aio_tokio")]
-impl From<http::Error> for RequestError {
-    fn from(err: http::Error) -> RequestError {
-        RequestError::HttpError(err)
-    }
-}
-
-#[cfg(feature = "aio_tokio")]
-impl From<hyper::Error> for RequestError {
-    fn from(err: hyper::Error) -> RequestError {
-        RequestError::HyperError(err)
-    }
-}
-
-#[cfg(feature = "aio_tokio")]
-impl From<FromUtf8Error> for RequestError {
-    fn from(err: FromUtf8Error) -> RequestError {
-        RequestError::Utf8Error(err)
-    }
+    #[cfg(feature = "aio_tokio")]
+    #[error("UTF-8 Error: {0}")]
+    Utf8Error(#[from] FromUtf8Error),
 }
 
 #[cfg(feature = "aio_tokio")]
@@ -79,99 +52,64 @@ impl From<Elapsed> for RequestError {
     }
 }
 
-#[cfg(feature = "aio_tokio")]
-impl From<hyper_util::client::legacy::Error> for RequestError {
-    fn from(err: hyper_util::client::legacy::Error) -> Self {
-        RequestError::HyperClientError(err)
-    }
-}
-
-impl fmt::Display for RequestError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            #[cfg(feature = "io_sync")]
-            RequestError::AttoHttpError(ref e) => write!(f, "HTTP error {e}"),
-            RequestError::InvalidResponse(ref e) => write!(f, "Invalid response from gateway: {e}"),
-            RequestError::IoError(ref e) => write!(f, "IO error. {e}"),
-            RequestError::ErrorCode(n, ref e) => write!(f, "Gateway response error {n}: {e}"),
-            RequestError::UnsupportedAction(ref e) => write!(f, "Gateway does not support action: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HyperClientError(ref e) => write!(f, "Hyper Client Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HttpError(ref e) => write!(f, "Http  Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::Utf8Error(ref e) => write!(f, "Utf8Error Error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for RequestError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match *self {
-            #[cfg(feature = "io_sync")]
-            RequestError::AttoHttpError(ref e) => Some(e),
-            RequestError::InvalidResponse(..) => None,
-            RequestError::IoError(ref e) => Some(e),
-            RequestError::ErrorCode(..) => None,
-            RequestError::UnsupportedAction(..) => None,
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HyperError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HyperClientError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::HttpError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            RequestError::Utf8Error(ref e) => Some(e),
-        }
-    }
-}
-
 /// Errors returned by `Gateway::get_external_ip`
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum GetExternalIpError {
     /// The client is not authorized to perform the operation.
+    #[error("The client is not authorized to remove the port")]
     ActionNotAuthorized,
     /// Some other error occured performing the request.
-    RequestError(RequestError),
+    #[error("Request Error. {0}")]
+    RequestError(#[source] RequestError),
+}
+
+impl From<io::Error> for GetExternalIpError {
+    fn from(err: io::Error) -> GetExternalIpError {
+        GetExternalIpError::RequestError(RequestError::from(err))
+    }
 }
 
 /// Errors returned by `Gateway::remove_port`
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum RemovePortError {
     /// The client is not authorized to perform the operation.
+    #[error("The client is not authorized to remove the port")]
     ActionNotAuthorized,
     /// No such port mapping.
+    #[error("The port was not mapped")]
     NoSuchPortMapping,
     /// Some other error occured performing the request.
-    RequestError(RequestError),
+    #[error("Request error. {0}")]
+    RequestError(#[source] RequestError),
 }
 
 /// Errors returned by `Gateway::add_any_port` and `Gateway::get_any_address`
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum AddAnyPortError {
     /// The client is not authorized to perform the operation.
+    #[error("The client is not authorized to remove the port")]
     ActionNotAuthorized,
     /// Can not add a mapping for local port 0.
+    #[error("Can not add a mapping for local port 0")]
     InternalPortZeroInvalid,
     /// The gateway does not have any free ports.
+    #[error("The gateway does not have any free ports")]
     NoPortsAvailable,
     /// The gateway can only map internal ports to same-numbered external ports
     /// and this external port is in use.
+    #[error(
+        "The gateway can only map internal ports to same-numbered external ports and this external port is in use."
+    )]
     ExternalPortInUse,
     /// The gateway only supports permanent leases (ie. a `lease_duration` of 0).
+    #[error("The gateway only supports permanent leases (ie. a `lease_duration` of 0),")]
     OnlyPermanentLeasesSupported,
     /// The description was too long for the gateway to handle.
+    #[error("The description was too long for the gateway to handle.")]
     DescriptionTooLong,
     /// Some other error occured performing the request.
-    RequestError(RequestError),
-}
-
-impl From<RequestError> for AddAnyPortError {
-    fn from(err: RequestError) -> AddAnyPortError {
-        AddAnyPortError::RequestError(err)
-    }
+    #[error("Request error. {0}")]
+    RequestError(#[from] RequestError),
 }
 
 impl From<GetExternalIpError> for AddAnyPortError {
@@ -184,198 +122,68 @@ impl From<GetExternalIpError> for AddAnyPortError {
 }
 
 /// Errors returned by `Gateway::add_port`
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum AddPortError {
     /// The client is not authorized to perform the operation.
+    #[error("The client is not authorized to map this port.")]
     ActionNotAuthorized,
     /// Can not add a mapping for local port 0.
+    #[error("Can not add a mapping for local port 0")]
     InternalPortZeroInvalid,
     /// External port number 0 (any port) is considered invalid by the gateway.
+    #[error("External port number 0 (any port) is considered invalid by the gateway.")]
     ExternalPortZeroInvalid,
     /// The requested mapping conflicts with a mapping assigned to another client.
+    #[error("The requested mapping conflicts with a mapping assigned to another client.")]
     PortInUse,
     /// The gateway requires that the requested internal and external ports are the same.
+    #[error("The gateway requires that the requested internal and external ports are the same.")]
     SamePortValuesRequired,
     /// The gateway only supports permanent leases (ie. a `lease_duration` of 0).
+    #[error("The gateway only supports permanent leases (ie. a `lease_duration` of 0),")]
     OnlyPermanentLeasesSupported,
     /// The description was too long for the gateway to handle.
+    #[error("The description was too long for the gateway to handle.")]
     DescriptionTooLong,
     /// Some other error occured performing the request.
-    RequestError(RequestError),
-}
-
-impl fmt::Display for GetExternalIpError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            GetExternalIpError::ActionNotAuthorized => write!(f, "The client is not authorized to remove the port"),
-            GetExternalIpError::RequestError(ref e) => write!(f, "Request Error. {e}"),
-        }
-    }
-}
-
-impl From<io::Error> for GetExternalIpError {
-    fn from(err: io::Error) -> GetExternalIpError {
-        GetExternalIpError::RequestError(RequestError::from(err))
-    }
-}
-
-impl std::error::Error for GetExternalIpError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
-
-impl fmt::Display for RemovePortError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            RemovePortError::ActionNotAuthorized => write!(f, "The client is not authorized to remove the port"),
-            RemovePortError::NoSuchPortMapping => write!(f, "The port was not mapped"),
-            RemovePortError::RequestError(ref e) => write!(f, "Request error. {e}"),
-        }
-    }
-}
-
-impl std::error::Error for RemovePortError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
-
-impl fmt::Display for AddAnyPortError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            AddAnyPortError::ActionNotAuthorized => {
-                write!(f, "The client is not authorized to remove the port")
-            }
-            AddAnyPortError::InternalPortZeroInvalid => {
-                write!(f, "Can not add a mapping for local port 0")
-            }
-            AddAnyPortError::NoPortsAvailable => {
-                write!(f, "The gateway does not have any free ports")
-            }
-            AddAnyPortError::OnlyPermanentLeasesSupported => {
-                write!(
-                    f,
-                    "The gateway only supports permanent leases (ie. a `lease_duration` of 0),"
-                )
-            }
-            AddAnyPortError::ExternalPortInUse => {
-                write!(
-                    f,
-                    "The gateway can only map internal ports to same-numbered external ports and this external port is in use."
-                )
-            }
-            AddAnyPortError::DescriptionTooLong => {
-                write!(f, "The description was too long for the gateway to handle.")
-            }
-            AddAnyPortError::RequestError(ref e) => write!(f, "Request error. {e}"),
-        }
-    }
-}
-
-impl std::error::Error for AddAnyPortError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
-}
-
-impl fmt::Display for AddPortError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            AddPortError::ActionNotAuthorized => write!(f, "The client is not authorized to map this port."),
-            AddPortError::InternalPortZeroInvalid => write!(f, "Can not add a mapping for local port 0"),
-            AddPortError::ExternalPortZeroInvalid => write!(
-                f,
-                "External port number 0 (any port) is considered invalid by the gateway."
-            ),
-            AddPortError::PortInUse => write!(
-                f,
-                "The requested mapping conflicts with a mapping assigned to another client."
-            ),
-            AddPortError::SamePortValuesRequired => write!(
-                f,
-                "The gateway requires that the requested internal and external ports are the same."
-            ),
-            AddPortError::OnlyPermanentLeasesSupported => write!(
-                f,
-                "The gateway only supports permanent leases (ie. a `lease_duration` of 0),"
-            ),
-            AddPortError::DescriptionTooLong => write!(f, "The description was too long for the gateway to handle."),
-            AddPortError::RequestError(ref e) => write!(f, "Request error. {e}"),
-        }
-    }
-}
-
-impl std::error::Error for AddPortError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
-    }
+    #[error("Request error. {0}")]
+    RequestError(#[source] RequestError),
 }
 
 /// Errors than can occur while trying to find the gateway.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum SearchError {
     /// Http/Hyper error
     #[cfg(feature = "io_sync")]
-    HttpError(attohttpc::Error),
+    #[error("HTTP error {0}")]
+    HttpError(#[from] attohttpc::Error),
     /// Unable to process the response
+    #[error("Invalid response")]
     InvalidResponse,
     /// Did not receive any valid response within timeout
+    #[error("No response within timeout")]
     NoResponseWithinTimeout,
     /// IO Error
-    IoError(io::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
     /// UTF-8 decoding error
-    Utf8Error(str::Utf8Error),
+    #[error("UTF-8 error: {0}")]
+    Utf8Error(#[from] str::Utf8Error),
     /// XML processing error
-    XmlError(xmltree::ParseError),
+    #[error("XML error: {0}")]
+    XmlError(#[from] xmltree::ParseError),
     /// When using the aio feature.
     #[cfg(feature = "aio_tokio")]
-    HyperError(hyper::Error),
+    #[error("Hyper Error: {0}")]
+    HyperError(#[from] hyper::Error),
     /// When using the aio feature.
     #[cfg(feature = "aio_tokio")]
-    HyperClientError(hyper_util::client::legacy::Error),
+    #[error("Hyper Client Error: {0}")]
+    HyperClientError(#[from] hyper_util::client::legacy::Error),
     /// Error parsing URI
     #[cfg(feature = "aio_tokio")]
-    InvalidUri(hyper::http::uri::InvalidUri),
-}
-
-#[cfg(feature = "io_sync")]
-impl From<attohttpc::Error> for SearchError {
-    fn from(err: attohttpc::Error) -> SearchError {
-        SearchError::HttpError(err)
-    }
-}
-
-impl From<io::Error> for SearchError {
-    fn from(err: io::Error) -> SearchError {
-        SearchError::IoError(err)
-    }
-}
-
-impl From<str::Utf8Error> for SearchError {
-    fn from(err: str::Utf8Error) -> SearchError {
-        SearchError::Utf8Error(err)
-    }
-}
-
-impl From<xmltree::ParseError> for SearchError {
-    fn from(err: xmltree::ParseError) -> SearchError {
-        SearchError::XmlError(err)
-    }
-}
-
-#[cfg(feature = "aio_tokio")]
-impl From<hyper::Error> for SearchError {
-    fn from(err: hyper::Error) -> SearchError {
-        SearchError::HyperError(err)
-    }
-}
-
-#[cfg(feature = "aio_tokio")]
-impl From<hyper::http::uri::InvalidUri> for SearchError {
-    fn from(err: hyper::http::uri::InvalidUri) -> SearchError {
-        SearchError::InvalidUri(err)
-    }
+    #[error("InvalidUri Error: {0}")]
+    InvalidUri(#[from] hyper::http::uri::InvalidUri),
 }
 
 #[cfg(feature = "aio_tokio")]
@@ -385,62 +193,18 @@ impl From<Elapsed> for SearchError {
     }
 }
 
-#[cfg(feature = "aio_tokio")]
-impl From<hyper_util::client::legacy::Error> for SearchError {
-    fn from(err: hyper_util::client::legacy::Error) -> Self {
-        SearchError::HyperClientError(err)
-    }
-}
-
-impl fmt::Display for SearchError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            #[cfg(feature = "io_sync")]
-            SearchError::HttpError(ref e) => write!(f, "HTTP error {e}"),
-            SearchError::InvalidResponse => write!(f, "Invalid response"),
-            SearchError::NoResponseWithinTimeout => write!(f, "No response within timeout"),
-            SearchError::IoError(ref e) => write!(f, "IO error: {e}"),
-            SearchError::Utf8Error(ref e) => write!(f, "UTF-8 error: {e}"),
-            SearchError::XmlError(ref e) => write!(f, "XML error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::HyperError(ref e) => write!(f, "Hyper Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::HyperClientError(ref e) => write!(f, "Hyper Client Error: {e}"),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::InvalidUri(ref e) => write!(f, "InvalidUri Error: {e}"),
-        }
-    }
-}
-
-impl error::Error for SearchError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match *self {
-            #[cfg(feature = "io_sync")]
-            SearchError::HttpError(ref e) => Some(e),
-            SearchError::InvalidResponse => None,
-            SearchError::NoResponseWithinTimeout => None,
-            SearchError::IoError(ref e) => Some(e),
-            SearchError::Utf8Error(ref e) => Some(e),
-            SearchError::XmlError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::HyperError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::HyperClientError(ref e) => Some(e),
-            #[cfg(feature = "aio_tokio")]
-            SearchError::InvalidUri(ref e) => Some(e),
-        }
-    }
-}
-
 /// Errors than can occur while getting a port mapping
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum GetGenericPortMappingEntryError {
     /// The client is not authorized to perform the operation.
+    #[error("The client is not authorized to look up port mappings.")]
     ActionNotAuthorized,
     /// The specified array index is out of bounds.
+    #[error("The provided index into the port mapping list is invalid.")]
     SpecifiedArrayIndexInvalid,
     /// Some other error occured performing the request.
-    RequestError(RequestError),
+    #[error("{0}")]
+    RequestError(#[source] RequestError),
 }
 
 impl From<RequestError> for GetGenericPortMappingEntryError {
@@ -453,100 +217,28 @@ impl From<RequestError> for GetGenericPortMappingEntryError {
     }
 }
 
-impl fmt::Display for GetGenericPortMappingEntryError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            GetGenericPortMappingEntryError::ActionNotAuthorized => {
-                write!(f, "The client is not authorized to look up port mappings.")
-            }
-            GetGenericPortMappingEntryError::SpecifiedArrayIndexInvalid => {
-                write!(f, "The provided index into the port mapping list is invalid.")
-            }
-            GetGenericPortMappingEntryError::RequestError(ref e) => e.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for GetGenericPortMappingEntryError {}
-
 /// An error type that emcompasses all possible errors.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
     /// `AddAnyPortError`
-    AddAnyPortError(AddAnyPortError),
+    #[error("{0}")]
+    AddAnyPortError(#[from] AddAnyPortError),
     /// `AddPortError`
-    AddPortError(AddPortError),
+    #[error("{0}")]
+    AddPortError(#[from] AddPortError),
     /// `GetExternalIpError`
-    GetExternalIpError(GetExternalIpError),
+    #[error("{0}")]
+    GetExternalIpError(#[from] GetExternalIpError),
     /// `RemovePortError`
-    RemovePortError(RemovePortError),
+    #[error("{0}")]
+    RemovePortError(#[from] RemovePortError),
     /// `RequestError`
-    RequestError(RequestError),
+    #[error("{0}")]
+    RequestError(#[from] RequestError),
     /// `SearchError`
-    SearchError(SearchError),
+    #[error("{0}")]
+    SearchError(#[from] SearchError),
 }
 
 /// A result type where the error is `igd::Error`.
 pub type Result<T = ()> = std::result::Result<T, Error>;
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::AddAnyPortError(ref e) => e.fmt(f),
-            Error::AddPortError(ref e) => e.fmt(f),
-            Error::GetExternalIpError(ref e) => e.fmt(f),
-            Error::RemovePortError(ref e) => e.fmt(f),
-            Error::RequestError(ref e) => e.fmt(f),
-            Error::SearchError(ref e) => e.fmt(f),
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match *self {
-            Error::AddAnyPortError(ref e) => Some(e),
-            Error::AddPortError(ref e) => Some(e),
-            Error::GetExternalIpError(ref e) => Some(e),
-            Error::RemovePortError(ref e) => Some(e),
-            Error::RequestError(ref e) => Some(e),
-            Error::SearchError(ref e) => Some(e),
-        }
-    }
-}
-
-impl From<AddAnyPortError> for Error {
-    fn from(err: AddAnyPortError) -> Error {
-        Error::AddAnyPortError(err)
-    }
-}
-
-impl From<AddPortError> for Error {
-    fn from(err: AddPortError) -> Error {
-        Error::AddPortError(err)
-    }
-}
-
-impl From<GetExternalIpError> for Error {
-    fn from(err: GetExternalIpError) -> Error {
-        Error::GetExternalIpError(err)
-    }
-}
-
-impl From<RemovePortError> for Error {
-    fn from(err: RemovePortError) -> Error {
-        Error::RemovePortError(err)
-    }
-}
-
-impl From<RequestError> for Error {
-    fn from(err: RequestError) -> Error {
-        Error::RequestError(err)
-    }
-}
-
-impl From<SearchError> for Error {
-    fn from(err: SearchError) -> Error {
-        Error::SearchError(err)
-    }
-}
