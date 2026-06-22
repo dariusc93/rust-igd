@@ -16,7 +16,7 @@ jobs:
           toolchain: stable
       - run: cargo test
         shell: bash
-      - run: cargo test --features aio
+      - run: cargo test --features aio_tokio
         shell: bash
 
   clippy:
