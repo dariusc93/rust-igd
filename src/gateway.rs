@@ -1,6 +1,7 @@
 use attohttpc::{Method, RequestBuilder};
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
 use crate::common::{self, messages, parsing, parsing::RequestResult};
@@ -249,5 +250,20 @@ impl Gateway {
 impl fmt::Display for Gateway {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "http://{}{}", self.addr, self.control_url)
+    }
+}
+
+impl PartialEq for Gateway {
+    fn eq(&self, other: &Gateway) -> bool {
+        self.addr == other.addr && self.control_url == other.control_url
+    }
+}
+
+impl Eq for Gateway {}
+
+impl Hash for Gateway {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.addr.hash(state);
+        self.control_url.hash(state);
     }
 }

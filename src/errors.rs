@@ -56,7 +56,7 @@ impl From<Elapsed> for RequestError {
 #[derive(thiserror::Error, Debug)]
 pub enum GetExternalIpError {
     /// The client is not authorized to perform the operation.
-    #[error("The client is not authorized to remove the port")]
+    #[error("The client is not authorized to get the external IP address")]
     ActionNotAuthorized,
     /// Some other error occured performing the request.
     #[error("Request Error. {0}")]
@@ -87,7 +87,7 @@ pub enum RemovePortError {
 #[derive(thiserror::Error, Debug)]
 pub enum AddAnyPortError {
     /// The client is not authorized to perform the operation.
-    #[error("The client is not authorized to remove the port")]
+    #[error("The client is not authorized to map this port.")]
     ActionNotAuthorized,
     /// Can not add a mapping for local port 0.
     #[error("Can not add a mapping for local port 0")]
@@ -102,7 +102,7 @@ pub enum AddAnyPortError {
     )]
     ExternalPortInUse,
     /// The gateway only supports permanent leases (ie. a `lease_duration` of 0).
-    #[error("The gateway only supports permanent leases (ie. a `lease_duration` of 0),")]
+    #[error("The gateway only supports permanent leases (ie. a `lease_duration` of 0).")]
     OnlyPermanentLeasesSupported,
     /// The description was too long for the gateway to handle.
     #[error("The description was too long for the gateway to handle.")]
@@ -140,7 +140,7 @@ pub enum AddPortError {
     #[error("The gateway requires that the requested internal and external ports are the same.")]
     SamePortValuesRequired,
     /// The gateway only supports permanent leases (ie. a `lease_duration` of 0).
-    #[error("The gateway only supports permanent leases (ie. a `lease_duration` of 0),")]
+    #[error("The gateway only supports permanent leases (ie. a `lease_duration` of 0).")]
     OnlyPermanentLeasesSupported,
     /// The description was too long for the gateway to handle.
     #[error("The description was too long for the gateway to handle.")]
@@ -229,6 +229,9 @@ pub enum Error {
     /// `GetExternalIpError`
     #[error("{0}")]
     GetExternalIpError(#[from] GetExternalIpError),
+    /// `GetGenericPortMappingEntryError`
+    #[error("{0}")]
+    GetGenericPortMappingEntryError(#[from] GetGenericPortMappingEntryError),
     /// `RemovePortError`
     #[error("{0}")]
     RemovePortError(#[from] RemovePortError),
