@@ -48,7 +48,7 @@ pub enum RequestError {
 #[cfg(feature = "aio_tokio")]
 impl From<Elapsed> for RequestError {
     fn from(_err: Elapsed) -> RequestError {
-        RequestError::IoError(io::Error::new(io::ErrorKind::TimedOut, "timer failed"))
+        RequestError::IoError(io::Error::new(io::ErrorKind::TimedOut, "control request timed out"))
     }
 }
 

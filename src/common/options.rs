@@ -6,6 +6,9 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Timeout for each broadcast response during a gateway search.
 #[allow(dead_code)]
 pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Default timeout for a control request to the gateway.
+#[allow(dead_code)]
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Gateway search configuration
 ///
