@@ -5,8 +5,8 @@ mod gateway;
 #[cfg(feature = "aio_tokio")]
 pub mod tokio;
 
-use std::future::Future;
 use crate::RequestError;
+use std::future::Future;
 
 pub use self::gateway::Gateway;
 
