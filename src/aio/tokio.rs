@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use futures::prelude::*;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Empty, Limited};
 use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use hyper::Request;
 use hyper_util::client::legacy::Client;
@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use tokio::{net::UdpSocket, time::timeout};
 
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
-use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
+use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
 use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::{aio::Gateway, RequestError};
@@ -38,7 +38,11 @@ impl Provider for Tokio {
 
         let send = async {
             let resp = client.request(req).await?;
-            let body = resp.into_body().collect().await?.to_bytes();
+            let body = Limited::new(resp.into_body(), MAX_RESPONSE_BYTES)
+                .collect()
+                .await
+                .map_err(|e| RequestError::InvalidResponse(format!("could not read response body: {e}")))?
+                .to_bytes();
             let string = String::from_utf8(body.to_vec())?;
             Ok::<_, RequestError>(string)
         };
@@ -162,7 +166,11 @@ async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, Stri
     debug!("requesting control url from: {uri}");
     let client: Client<_, Empty<Bytes>> = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
 
-    let resp = client.get(uri).await?.into_body().collect().await?.to_bytes();
+    let resp = Limited::new(client.get(uri).await?.into_body(), MAX_RESPONSE_BYTES)
+        .collect()
+        .await
+        .map_err(|_| SearchError::InvalidResponse)?
+        .to_bytes();
 
     debug!("handling control response from: {addr}");
     let c = std::io::Cursor::new(&resp);
@@ -181,7 +189,11 @@ async fn get_control_schemas(
     debug!("requesting control schema from: {uri}");
     let client: Client<_, Empty<Bytes>> = Client::builder(hyper_util::rt::TokioExecutor::new()).build_http();
 
-    let resp = client.get(uri).await?.into_body().collect().await?.to_bytes();
+    let resp = Limited::new(client.get(uri).await?.into_body(), MAX_RESPONSE_BYTES)
+        .collect()
+        .await
+        .map_err(|_| SearchError::InvalidResponse)?
+        .to_bytes();
 
     debug!("handling schema response from: {addr}");
     let c = std::io::Cursor::new(&resp);

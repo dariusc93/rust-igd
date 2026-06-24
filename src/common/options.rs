@@ -9,6 +9,9 @@ pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default timeout for a control request to the gateway.
 #[allow(dead_code)]
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default size (in bytes) of an HTTP response body accepted from the gateway.
+#[allow(dead_code)]
+pub const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Gateway search configuration
 ///

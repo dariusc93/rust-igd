@@ -4,7 +4,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
-use crate::common::options::DEFAULT_REQUEST_TIMEOUT;
+use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, MAX_RESPONSE_BYTES};
 use crate::common::{self, messages, parsing, parsing::RequestResult};
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
 use crate::PortMappingProtocol;
@@ -43,7 +43,9 @@ impl Gateway {
             Err(e) => return Err(AttoHttpError(e)),
         };
 
-        parsing::parse_response(response.text()?, ok)
+        let bytes = common::read_response_body(response, MAX_RESPONSE_BYTES)?;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        parsing::parse_response(text, ok)
     }
 
     /// Get the external IP address of the gateway.

@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use attohttpc::{Method, RequestBuilder};
 use log::debug;
 
-use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
-use crate::common::{messages, parsing, SearchOptions};
+use crate::common::options::{DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
+use crate::common::{self, messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
 
@@ -116,7 +116,7 @@ fn get_control_urls(
     match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => {
             let response = request_builder.timeout(timeout).send()?;
-            parsing::parse_control_urls(&response.bytes()?[..])
+            parsing::parse_control_urls(&common::read_response_body(response, MAX_RESPONSE_BYTES)?[..])
         }
         Err(error) => Err(SearchError::HttpError(error)),
     }
@@ -131,7 +131,7 @@ fn get_schemas(
     match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => {
             let response = request_builder.timeout(timeout).send()?;
-            parsing::parse_schemas(&response.bytes()?[..])
+            parsing::parse_schemas(&common::read_response_body(response, MAX_RESPONSE_BYTES)?[..])
         }
         Err(error) => Err(SearchError::HttpError(error)),
     }
