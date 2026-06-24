@@ -25,6 +25,9 @@ pub struct Gateway<P> {
     /// Service type of the gateway's WAN connection service (e.g.
     /// `urn:schemas-upnp-org:service:WANIPConnection:1`)
     pub service_type: String,
+    /// Control url of the device's `WANIPv6FirewallControl` service, if it exposes one.
+    #[cfg(feature = "ipv6")]
+    pub ipv6_firewall_control_url: Option<String>,
     /// Executor provider
     pub provider: P,
 }
@@ -280,6 +283,120 @@ impl<P: Provider> Gateway<P> {
             )
             .await;
         parsing::parse_get_generic_port_mapping_entry(result)
+    }
+
+    #[cfg(feature = "ipv6")]
+    async fn firewall_request(
+        &self,
+        control_url: &str,
+        action: &str,
+        body: &str,
+        ok: &str,
+    ) -> Result<RequestReponse, RequestError> {
+        let url = format!("http://{}{}", self.addr, control_url);
+        let header = messages::soap_action(messages::WAN_IPV6_FIREWALL_CONTROL, action);
+        let text = P::send_async(&url, &header, body).await?;
+        parsing::parse_response(text, ok)
+    }
+
+    /// Open an IPv6 firewall pinhole allowing inbound traffic to `internal_client`.
+    ///
+    /// This is the IPv6 equivalent of port forwarding: IPv6 is not NATed, so rather than a port
+    /// mapping the gateway opens a pinhole in its firewall to the (globally routable) internal
+    /// IPv6 client. The remote host and port are wildcarded, so any source is allowed.
+    ///
+    /// `lease_duration` is in seconds and must be between `1` and `86400`
+    /// (`0` is not valid for a pinhole). Requires the gateway to expose a
+    /// `WANIPv6FirewallControl` service.
+    #[cfg(feature = "ipv6")]
+    pub async fn add_pinhole(
+        &self,
+        protocol: PortMappingProtocol,
+        internal_client: std::net::SocketAddrV6,
+        lease_duration: u32,
+    ) -> Result<u16, errors::PinholeError> {
+        if !(1..=86400).contains(&lease_duration) {
+            return Err(errors::PinholeError::InvalidLeaseDuration);
+        }
+        let control_url = self
+            .ipv6_firewall_control_url
+            .as_deref()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
+        let result = self
+            .firewall_request(
+                control_url,
+                messages::ADD_PINHOLE_ACTION,
+                &messages::format_add_pinhole_message(
+                    "",
+                    0,
+                    *internal_client.ip(),
+                    internal_client.port(),
+                    protocol,
+                    lease_duration,
+                ),
+                "AddPinholeResponse",
+            )
+            .await;
+        parsing::parse_add_pinhole_response(result)
+    }
+
+    /// Extend the lease of an existing pinhole identified by its `UniqueID`.
+    ///
+    /// Note that `lease_duration` is in seconds and must be between `1` and `86400`.
+    #[cfg(feature = "ipv6")]
+    pub async fn update_pinhole(&self, unique_id: u16, lease_duration: u32) -> Result<(), errors::PinholeError> {
+        if !(1..=86400).contains(&lease_duration) {
+            return Err(errors::PinholeError::InvalidLeaseDuration);
+        }
+        let control_url = self
+            .ipv6_firewall_control_url
+            .as_deref()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
+        let result = self
+            .firewall_request(
+                control_url,
+                messages::UPDATE_PINHOLE_ACTION,
+                &messages::format_update_pinhole_message(unique_id, lease_duration),
+                "UpdatePinholeResponse",
+            )
+            .await;
+        parsing::parse_pinhole_unit_response(result)
+    }
+
+    /// Remove an existing pinhole identified by its `UniqueID`.
+    #[cfg(feature = "ipv6")]
+    pub async fn remove_pinhole(&self, unique_id: u16) -> Result<(), errors::PinholeError> {
+        let control_url = self
+            .ipv6_firewall_control_url
+            .as_deref()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
+        let result = self
+            .firewall_request(
+                control_url,
+                messages::DELETE_PINHOLE_ACTION,
+                &messages::format_delete_pinhole_message(unique_id),
+                "DeletePinholeResponse",
+            )
+            .await;
+        parsing::parse_pinhole_unit_response(result)
+    }
+
+    /// Query whether the gateway's IPv6 firewall is enabled and whether inbound pinholes are allowed.
+    #[cfg(feature = "ipv6")]
+    pub async fn get_firewall_status(&self) -> Result<parsing::FirewallStatus, errors::PinholeError> {
+        let control_url = self
+            .ipv6_firewall_control_url
+            .as_deref()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
+        let result = self
+            .firewall_request(
+                control_url,
+                messages::GET_FIREWALL_STATUS_ACTION,
+                &messages::format_get_firewall_status_message(),
+                "GetFirewallStatusResponse",
+            )
+            .await;
+        parsing::parse_firewall_status_response(result)
     }
 }
 

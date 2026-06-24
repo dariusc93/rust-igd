@@ -173,6 +173,88 @@ pub fn formate_get_generic_port_mapping_entry_message(service_type: &str, port_m
     ))
 }
 
+// --- IPv6 firewall pinhole messages (WANIPv6FirewallControl:1, IGD:2) ---
+
+/// Service type of the IGD:2 IPv6 firewall control service.
+#[cfg(feature = "ipv6")]
+pub const WAN_IPV6_FIREWALL_CONTROL: &str = "urn:schemas-upnp-org:service:WANIPv6FirewallControl:1";
+
+#[cfg(feature = "ipv6")]
+pub const ADD_PINHOLE_ACTION: &str = "AddPinhole";
+
+#[cfg(feature = "ipv6")]
+pub const UPDATE_PINHOLE_ACTION: &str = "UpdatePinhole";
+
+#[cfg(feature = "ipv6")]
+pub const DELETE_PINHOLE_ACTION: &str = "DeletePinhole";
+
+#[cfg(feature = "ipv6")]
+pub const GET_FIREWALL_STATUS_ACTION: &str = "GetFirewallStatus";
+
+/// IANA protocol number for a port-mapping protocol, as required by `AddPinhole`
+#[cfg(feature = "ipv6")]
+fn protocol_number(protocol: PortMappingProtocol) -> u16 {
+    match protocol {
+        PortMappingProtocol::TCP => 6,
+        PortMappingProtocol::UDP => 17,
+    }
+}
+
+#[cfg(feature = "ipv6")]
+pub fn format_add_pinhole_message(
+    remote_host: &str,
+    remote_port: u16,
+    internal_client: std::net::Ipv6Addr,
+    internal_port: u16,
+    protocol: PortMappingProtocol,
+    lease_time: u32,
+) -> String {
+    let service = WAN_IPV6_FIREWALL_CONTROL;
+    let remote_host = xml_escape(remote_host);
+    let internal_client = xml_escape(&internal_client.to_string());
+    let protocol = protocol_number(protocol);
+    format_message(format!(
+        r#"<u:AddPinhole xmlns:u="{service}">
+<RemoteHost>{remote_host}</RemoteHost>
+<RemotePort>{remote_port}</RemotePort>
+<InternalClient>{internal_client}</InternalClient>
+<InternalPort>{internal_port}</InternalPort>
+<Protocol>{protocol}</Protocol>
+<LeaseTime>{lease_time}</LeaseTime>
+</u:AddPinhole>"#
+    ))
+}
+
+#[cfg(feature = "ipv6")]
+pub fn format_update_pinhole_message(unique_id: u16, new_lease_time: u32) -> String {
+    let service = WAN_IPV6_FIREWALL_CONTROL;
+    format_message(format!(
+        r#"<u:UpdatePinhole xmlns:u="{service}">
+<UniqueID>{unique_id}</UniqueID>
+<NewLeaseTime>{new_lease_time}</NewLeaseTime>
+</u:UpdatePinhole>"#
+    ))
+}
+
+#[cfg(feature = "ipv6")]
+pub fn format_delete_pinhole_message(unique_id: u16) -> String {
+    let service = WAN_IPV6_FIREWALL_CONTROL;
+    format_message(format!(
+        r#"<u:DeletePinhole xmlns:u="{service}">
+<UniqueID>{unique_id}</UniqueID>
+</u:DeletePinhole>"#
+    ))
+}
+
+#[cfg(feature = "ipv6")]
+pub fn format_get_firewall_status_message() -> String {
+    let service = WAN_IPV6_FIREWALL_CONTROL;
+    format_message(format!(
+        r#"<u:GetFirewallStatus xmlns:u="{service}">
+</u:GetFirewallStatus>"#
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +309,44 @@ mod tests {
         assert!(body.contains("Bob &amp; Alice &lt;/NewPortMappingDescription&gt;&lt;evil&gt;"));
         assert!(!body.contains("<evil>"));
         assert!(!body.contains("Bob & Alice"));
+    }
+
+    #[cfg(feature = "ipv6")]
+    #[test]
+    fn add_pinhole_message_uses_firewall_namespace_and_protocol_number() {
+        let body = format_add_pinhole_message(
+            "",
+            0,
+            "2001:db8::1".parse().unwrap(),
+            8080,
+            PortMappingProtocol::TCP,
+            3600,
+        );
+        assert!(body.contains(r#"xmlns:u="urn:schemas-upnp-org:service:WANIPv6FirewallControl:1""#));
+        assert!(body.contains("<u:AddPinhole"));
+        assert!(body.contains("<InternalClient>2001:db8::1</InternalClient>"));
+        assert!(body.contains("<InternalPort>8080</InternalPort>"));
+        assert!(body.contains("<Protocol>6</Protocol>")); // TCP = IANA protocol 6
+        assert!(body.contains("<LeaseTime>3600</LeaseTime>"));
+    }
+
+    #[cfg(feature = "ipv6")]
+    #[test]
+    fn udp_pinhole_uses_protocol_number_17() {
+        let body = format_add_pinhole_message("", 0, "fe80::1".parse().unwrap(), 53, PortMappingProtocol::UDP, 600);
+        assert!(body.contains("<Protocol>17</Protocol>")); // UDP = IANA protocol 17
+    }
+
+    #[cfg(feature = "ipv6")]
+    #[test]
+    fn update_and_delete_pinhole_messages() {
+        let update = format_update_pinhole_message(42, 7200);
+        assert!(update.contains("<u:UpdatePinhole"));
+        assert!(update.contains("<UniqueID>42</UniqueID>"));
+        assert!(update.contains("<NewLeaseTime>7200</NewLeaseTime>"));
+
+        let delete = format_delete_pinhole_message(42);
+        assert!(delete.contains("<u:DeletePinhole"));
+        assert!(delete.contains("<UniqueID>42</UniqueID>"));
     }
 }

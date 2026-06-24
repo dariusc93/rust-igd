@@ -1,0 +1,49 @@
+use std::env;
+use std::net::{Ipv6Addr, SocketAddrV6};
+
+extern crate igd_next as igd;
+
+fn main() {
+    let gateway = match igd::search_gateway(Default::default()) {
+        Ok(gateway) => gateway,
+        Err(err) => {
+            println!("Failed to find an IGD gateway: {err}");
+            return;
+        }
+    };
+
+    let args: Vec<_> = env::args().collect();
+    if args.len() != 3 {
+        println!("Usage: add_pinhole <internal_ipv6_address> <internal_port>");
+        return;
+    }
+    let ip = args[1].parse::<Ipv6Addr>().expect("Invalid IPv6 address");
+    let port = args[2].parse::<u16>().expect("Invalid port");
+    let internal_client = SocketAddrV6::new(ip, port, 0, 0);
+
+    // Check whether the gateway supports IPv6 pinholes at all.
+    match gateway.get_firewall_status() {
+        Ok(status) => println!(
+            "Firewall enabled: {}, inbound pinholes allowed: {}",
+            status.firewall_enabled, status.inbound_pinhole_allowed
+        ),
+        Err(err) => {
+            println!("Could not query firewall status: {err}");
+            return;
+        }
+    }
+
+    // Open a TCP pinhole to the internal client with a one-hour lease (1..=86400 seconds).
+    match gateway.add_pinhole(igd::PortMappingProtocol::TCP, internal_client, 3600) {
+        Ok(unique_id) => {
+            println!("AddPinhole successful, UniqueID = {unique_id}");
+
+            // Clean up by removing the pinhole we just created.
+            match gateway.remove_pinhole(unique_id) {
+                Ok(()) => println!("DeletePinhole successful."),
+                Err(err) => println!("Error removing pinhole: {err}"),
+            }
+        }
+        Err(err) => println!("AddPinhole failed: {err}"),
+    }
+}

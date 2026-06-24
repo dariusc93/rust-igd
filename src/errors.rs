@@ -245,3 +245,33 @@ pub enum Error {
 
 /// A result type where the error is `igd::Error`.
 pub type Result<T = ()> = std::result::Result<T, Error>;
+
+/// Errors returned by the IPv6 firewall pinhole operations.
+#[cfg(feature = "ipv6")]
+#[derive(thiserror::Error, Debug)]
+pub enum PinholeError {
+    /// The gateway did not advertise a `WANIPv6FirewallControl` service,
+    #[error("the gateway does not provide a WANIPv6FirewallControl service")]
+    FirewallControlUnavailable,
+    /// The requested lease duration was outside the valid range for a pinhole.
+    #[error("the pinhole lease duration must be between 1 and 86400 seconds")]
+    InvalidLeaseDuration,
+    /// The client is not authorized to perform the operation.
+    #[error("the client is not authorized to perform this firewall operation")]
+    ActionNotAuthorized,
+    /// The gateway's pinhole table is full.
+    #[error("the gateway's pinhole table is full")]
+    PinholeSpaceExhausted,
+    /// The gateway's IPv6 firewall is disabled.
+    #[error("the gateway's IPv6 firewall is disabled")]
+    FirewallDisabled,
+    /// Inbound pinholes are not allowed by the gateway.
+    #[error("inbound pinholes are not allowed by the gateway")]
+    InboundPinholeNotAllowed,
+    /// No pinhole exists with the given `UniqueID`.
+    #[error("no pinhole exists with the given id")]
+    NoSuchEntry,
+    /// Some other error occurred performing the request.
+    #[error("Request error. {0}")]
+    RequestError(#[source] RequestError),
+}

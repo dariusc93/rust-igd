@@ -5,10 +5,14 @@
 //! You can then communicate with the device via this object.
 
 // data structures
+#[cfg(all(feature = "ipv6", any(feature = "io_sync", feature = "aio_tokio")))]
+pub use self::common::parsing::FirewallStatus;
 #[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::common::parsing::PortMappingEntry;
 #[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::common::SearchOptions;
+#[cfg(all(feature = "ipv6", any(feature = "io_sync", feature = "aio_tokio")))]
+pub use self::errors::PinholeError;
 #[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::errors::{
     AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError, RemovePortError, RequestError,

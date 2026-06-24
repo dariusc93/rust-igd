@@ -95,7 +95,7 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
             }
         };
 
-        let (service_type, control_schema_url, control_url) = match get_control_urls(&addr, &root_url).await {
+        let urls = match get_control_urls(&addr, &root_url).await {
             Ok(v) => v,
             Err(e) => {
                 debug!("error getting control URLs: {}", e);
@@ -103,7 +103,7 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
             }
         };
 
-        let control_schema = match get_control_schemas(&addr, &control_schema_url).await {
+        let control_schema = match get_control_schemas(&addr, &urls.control_schema_url).await {
             Ok(v) => v,
             Err(e) => {
                 debug!("error getting control schemas: {}", e);
@@ -114,10 +114,12 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
         return Ok(Gateway {
             addr,
             root_url,
-            control_url,
-            control_schema_url,
+            control_url: urls.control_url,
+            control_schema_url: urls.control_schema_url,
             control_schema,
-            service_type,
+            service_type: urls.service_type,
+            #[cfg(feature = "ipv6")]
+            ipv6_firewall_control_url: urls.ipv6_firewall_control_url,
             provider: Tokio,
         });
     }
@@ -157,7 +159,7 @@ fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, 
     Ok((addr, root_url))
 }
 
-async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, String, String), SearchError> {
+async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<parsing::DeviceUrls, SearchError> {
     let uri = match format!("http://{addr}{path}").parse() {
         Ok(uri) => uri,
         Err(err) => return Err(SearchError::from(err)),
@@ -173,8 +175,14 @@ async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<(String, Stri
         .to_bytes();
 
     debug!("handling control response from: {addr}");
-    let c = std::io::Cursor::new(&resp);
-    parsing::parse_control_urls(c)
+    let (service_type, control_schema_url, control_url) = parsing::parse_control_urls(std::io::Cursor::new(&resp))?;
+    Ok(parsing::DeviceUrls {
+        service_type,
+        control_schema_url,
+        control_url,
+        #[cfg(feature = "ipv6")]
+        ipv6_firewall_control_url: parsing::parse_firewall_control_url(std::io::Cursor::new(&resp)),
+    })
 }
 
 async fn get_control_schemas(

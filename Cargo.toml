@@ -50,6 +50,8 @@ tokio = { version = "1", features = ["full"] }
 default = ["io_sync"]
 io_sync = ["attohttpc"]
 aio_tokio = ["futures", "tokio", "hyper", "hyper-util", "http-body-util", "bytes", "http"]
+# Opt-in IPv6 firewall pinhole support (WANIPv6FirewallControl, IGD:2). Off by default.
+ipv6 = []
 
 [[example]]
 name = "add_any_port"
@@ -74,3 +76,7 @@ required-features = ["io_sync"]
 [[example]]
 name = "remove_port"
 required-features = ["io_sync"]
+
+[[example]]
+name = "add_pinhole"
+required-features = ["io_sync", "ipv6"]
