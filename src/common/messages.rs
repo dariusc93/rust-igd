@@ -8,16 +8,21 @@ ST:urn:schemas-upnp-org:device:InternetGatewayDevice:1\r
 Man:\"ssdp:discover\"\r
 MX:3\r\n\r\n";
 
-pub const GET_EXTERNAL_IP_HEADER: &str = r#""urn:schemas-upnp-org:service:WANIPConnection:1#GetExternalIPAddress""#;
+// SOAP action names.
+pub const GET_EXTERNAL_IP_ACTION: &str = "GetExternalIPAddress";
 
-pub const ADD_ANY_PORT_MAPPING_HEADER: &str = r#""urn:schemas-upnp-org:service:WANIPConnection:1#AddAnyPortMapping""#;
+pub const ADD_ANY_PORT_MAPPING_ACTION: &str = "AddAnyPortMapping";
 
-pub const ADD_PORT_MAPPING_HEADER: &str = r#""urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping""#;
+pub const ADD_PORT_MAPPING_ACTION: &str = "AddPortMapping";
 
-pub const DELETE_PORT_MAPPING_HEADER: &str = r#""urn:schemas-upnp-org:service:WANIPConnection:1#DeletePortMapping""#;
+pub const DELETE_PORT_MAPPING_ACTION: &str = "DeletePortMapping";
 
-pub const GET_GENERIC_PORT_MAPPING_ENTRY: &str =
-    r#""urn:schemas-upnp-org:service:WANIPConnection:1#GetGenericPortMappingEntry""#;
+pub const GET_GENERIC_PORT_MAPPING_ENTRY_ACTION: &str = "GetGenericPortMappingEntry";
+
+/// Build the quoted `SOAPAction` header value (`"<service_type>#<action>"`) for a request.
+pub fn soap_action(service_type: &str, action: &str) -> String {
+    format!("\"{service_type}#{action}\"")
+}
 
 const MESSAGE_HEAD: &str = r#"<?xml version="1.0"?>
 <s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
@@ -30,18 +35,15 @@ fn format_message(body: String) -> String {
     format!("{MESSAGE_HEAD}{body}{MESSAGE_TAIL}")
 }
 
-pub fn format_get_external_ip_message() -> String {
-    r#"<?xml version="1.0"?>
-<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/" xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
-    <s:Body>
-        <m:GetExternalIPAddress xmlns:m="urn:schemas-upnp-org:service:WANIPConnection:1">
-        </m:GetExternalIPAddress>
-    </s:Body>
-</s:Envelope>"#
-    .into()
+pub fn format_get_external_ip_message(service_type: &str) -> String {
+    format_message(format!(
+        r#"<m:GetExternalIPAddress xmlns:m="{service_type}">
+        </m:GetExternalIPAddress>"#
+    ))
 }
 
 pub fn format_add_any_port_mapping_message(
+    service_type: &str,
     schema: &[String],
     protocol: PortMappingProtocol,
     external_port: u16,
@@ -72,13 +74,14 @@ pub fn format_add_any_port_mapping_message(
         .join("\n");
 
     format_message(format!(
-        r#"<u:AddAnyPortMapping xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+        r#"<u:AddAnyPortMapping xmlns:u="{service_type}">
         {args}
         </u:AddAnyPortMapping>"#,
     ))
 }
 
 pub fn format_add_port_mapping_message(
+    service_type: &str,
     schema: &[String],
     protocol: PortMappingProtocol,
     external_port: u16,
@@ -109,13 +112,18 @@ pub fn format_add_port_mapping_message(
         .join("\n");
 
     format_message(format!(
-        r#"<u:AddPortMapping xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+        r#"<u:AddPortMapping xmlns:u="{service_type}">
         {args}
         </u:AddPortMapping>"#
     ))
 }
 
-pub fn format_delete_port_message(schema: &[String], protocol: PortMappingProtocol, external_port: u16) -> String {
+pub fn format_delete_port_message(
+    service_type: &str,
+    schema: &[String],
+    protocol: PortMappingProtocol,
+    external_port: u16,
+) -> String {
     let args = schema
         .iter()
         .filter_map(|argument| {
@@ -134,16 +142,47 @@ pub fn format_delete_port_message(schema: &[String], protocol: PortMappingProtoc
         .join("\n");
 
     format_message(format!(
-        r#"<u:DeletePortMapping xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+        r#"<u:DeletePortMapping xmlns:u="{service_type}">
         {args}
         </u:DeletePortMapping>"#
     ))
 }
 
-pub fn formate_get_generic_port_mapping_entry_message(port_mapping_index: u32) -> String {
+pub fn formate_get_generic_port_mapping_entry_message(service_type: &str, port_mapping_index: u32) -> String {
     format_message(format!(
-        r#"<u:GetGenericPortMappingEntry xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+        r#"<u:GetGenericPortMappingEntry xmlns:u="{service_type}">
         <NewPortMappingIndex>{port_mapping_index}</NewPortMappingIndex>
         </u:GetGenericPortMappingEntry>"#
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PPP: &str = "urn:schemas-upnp-org:service:WANPPPConnection:1";
+
+    #[test]
+    fn soap_action_uses_service_type() {
+        assert_eq!(
+            soap_action(PPP, "AddPortMapping"),
+            "\"urn:schemas-upnp-org:service:WANPPPConnection:1#AddPortMapping\""
+        );
+    }
+
+    #[test]
+    fn message_body_uses_service_type() {
+        let body = format_add_port_mapping_message(
+            PPP,
+            &["NewProtocol".to_string(), "NewExternalPort".to_string()],
+            PortMappingProtocol::TCP,
+            12345,
+            "192.168.1.5:80".parse().unwrap(),
+            0,
+            "test",
+        );
+        assert!(body.contains(r#"xmlns:u="urn:schemas-upnp-org:service:WANPPPConnection:1""#));
+        assert!(body.contains("<NewProtocol>TCP</NewProtocol>"));
+        assert!(body.contains("<NewExternalPort>12345</NewExternalPort>"));
+    }
 }

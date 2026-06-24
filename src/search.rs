@@ -71,7 +71,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
             }
         };
 
-        let (control_schema_url, control_url) =
+        let (service_type, control_schema_url, control_url) =
             match get_control_urls(&addr, &root_url, max_time.saturating_sub(start.elapsed())) {
                 Ok(o) => o,
                 Err(e) => {
@@ -100,13 +100,18 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
             control_url,
             control_schema_url,
             control_schema,
+            service_type,
         });
     }
 
     Err(SearchError::NoResponseWithinTimeout)
 }
 
-fn get_control_urls(addr: &SocketAddr, root_url: &str, timeout: Duration) -> Result<(String, String), SearchError> {
+fn get_control_urls(
+    addr: &SocketAddr,
+    root_url: &str,
+    timeout: Duration,
+) -> Result<(String, String, String), SearchError> {
     let url = format!("http://{}:{}{}", addr.ip(), addr.port(), root_url);
     match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => {
