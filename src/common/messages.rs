@@ -35,6 +35,23 @@ fn format_message(body: String) -> String {
     format!("{MESSAGE_HEAD}{body}{MESSAGE_TAIL}")
 }
 
+/// Escape a string for inclusion in XML text/attribute content, so a user-supplied value
+/// cannot produce malformed XML or inject elements into the SOAP request body.
+fn xml_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 pub fn format_get_external_ip_message(service_type: &str) -> String {
     format_message(format!(
         r#"<m:GetExternalIPAddress xmlns:m="{service_type}">
@@ -68,7 +85,7 @@ pub fn format_add_any_port_mapping_message(
                     return None;
                 }
             };
-            Some(format!("<{argument}>{value}</{argument}>"))
+            Some(format!("<{argument}>{}</{argument}>", xml_escape(&value)))
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -106,7 +123,7 @@ pub fn format_add_port_mapping_message(
                     return None;
                 }
             };
-            Some(format!("<{argument}>{value}</{argument}>",))
+            Some(format!("<{argument}>{}</{argument}>", xml_escape(&value)))
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -136,7 +153,7 @@ pub fn format_delete_port_message(
                     return None;
                 }
             };
-            Some(format!("<{argument}>{value}</{argument}>",))
+            Some(format!("<{argument}>{}</{argument}>", xml_escape(&value)))
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -184,5 +201,31 @@ mod tests {
         assert!(body.contains(r#"xmlns:u="urn:schemas-upnp-org:service:WANPPPConnection:1""#));
         assert!(body.contains("<NewProtocol>TCP</NewProtocol>"));
         assert!(body.contains("<NewExternalPort>12345</NewExternalPort>"));
+    }
+
+    #[test]
+    fn xml_escape_escapes_special_characters() {
+        assert_eq!(
+            xml_escape("a & b < c > d \" e ' f"),
+            "a &amp; b &lt; c &gt; d &quot; e &apos; f"
+        );
+        assert_eq!(xml_escape("plain text 123"), "plain text 123");
+    }
+
+    #[test]
+    fn description_is_xml_escaped_in_message_body() {
+        let body = format_add_port_mapping_message(
+            PPP,
+            &["NewPortMappingDescription".to_string()],
+            PortMappingProtocol::TCP,
+            12345,
+            "192.168.1.5:80".parse().unwrap(),
+            0,
+            "Bob & Alice </NewPortMappingDescription><evil>",
+        );
+        // The raw special characters must not appear unescaped in the body.
+        assert!(body.contains("Bob &amp; Alice &lt;/NewPortMappingDescription&gt;&lt;evil&gt;"));
+        assert!(!body.contains("<evil>"));
+        assert!(!body.contains("Bob & Alice"));
     }
 }
