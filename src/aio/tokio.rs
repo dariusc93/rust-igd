@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use tokio::{net::UdpSocket, time::timeout};
 
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
-use crate::common::options::{DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
+use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, RESPONSE_TIMEOUT};
 use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::{aio::Gateway, RequestError};
@@ -36,10 +36,14 @@ impl Provider for Tokio {
             .header(CONTENT_LENGTH, body.len() as u64)
             .body(body)?;
 
-        let resp = client.request(req).await?;
-        let body = resp.into_body().collect().await?.to_bytes();
-        let string = String::from_utf8(body.to_vec())?;
-        Ok(string)
+        let send = async {
+            let resp = client.request(req).await?;
+            let body = resp.into_body().collect().await?.to_bytes();
+            let string = String::from_utf8(body.to_vec())?;
+            Ok::<_, RequestError>(string)
+        };
+
+        timeout(DEFAULT_REQUEST_TIMEOUT, send).await?
     }
 }
 

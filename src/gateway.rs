@@ -1,8 +1,10 @@
 use attohttpc::{Method, RequestBuilder};
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
+use crate::common::options::DEFAULT_REQUEST_TIMEOUT;
 use crate::common::{self, messages, parsing, parsing::RequestResult};
 use crate::errors::{self, AddAnyPortError, AddPortError, GetExternalIpError, RemovePortError, RequestError};
 use crate::PortMappingProtocol;
@@ -33,6 +35,7 @@ impl Gateway {
 
         let response = match RequestBuilder::try_new(Method::POST, url) {
             Ok(request_builder) => request_builder
+                .timeout(DEFAULT_REQUEST_TIMEOUT)
                 .header("SOAPAction", header.as_str())
                 .header("Content-Type", "text/xml")
                 .text(body)
@@ -130,8 +133,10 @@ impl Gateway {
         const ATTEMPTS: usize = 20;
 
         for _ in 0..ATTEMPTS {
-            if let Ok(port) = self.add_random_port_mapping(protocol, local_addr, lease_duration, description) {
-                return Ok(port);
+            match self.add_random_port_mapping(protocol, local_addr, lease_duration, description) {
+                Ok(port) => return Ok(port),
+                Err(AddAnyPortError::NoPortsAvailable) => continue,
+                Err(e) => return Err(e),
             }
         }
 
@@ -256,5 +261,20 @@ impl Gateway {
 impl fmt::Display for Gateway {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "http://{}{}", self.addr, self.control_url)
+    }
+}
+
+impl PartialEq for Gateway {
+    fn eq(&self, other: &Gateway) -> bool {
+        self.addr == other.addr && self.control_url == other.control_url
+    }
+}
+
+impl Eq for Gateway {}
+
+impl Hash for Gateway {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.addr.hash(state);
+        self.control_url.hash(state);
     }
 }

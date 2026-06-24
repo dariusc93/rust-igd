@@ -33,23 +33,46 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 
     let socket = UdpSocket::bind(options.bind_addr)?;
 
-    let read_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
-    socket.set_read_timeout(Some(read_timeout))?;
+    let response_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
 
     socket.send_to(messages::SEARCH_REQUEST.as_bytes(), options.broadcast_address)?;
 
     while start.elapsed() < max_time {
-        let mut buf = [0u8; 1500];
+        let remaining = max_time.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
 
         // limit read, to the remaining time available
-        socket.set_read_timeout(Some(max_time - start.elapsed()))?;
-        let (read, _) = socket.recv_from(&mut buf)?;
-        let text = str::from_utf8(&buf[..read])?;
+        socket.set_read_timeout(Some(response_timeout.min(remaining)))?;
 
-        let (addr, root_url) = parsing::parse_search_result(text)?;
+        let mut buf = [0u8; 1500];
+        let (read, _) = match socket.recv_from(&mut buf) {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("error while receiving broadcast response: {e}");
+                continue;
+            }
+        };
+
+        let text = match str::from_utf8(&buf[..read]) {
+            Ok(text) => text,
+            Err(e) => {
+                debug!("received a non-utf8 broadcast response: {e}");
+                continue;
+            }
+        };
+
+        let (addr, root_url) = match parsing::parse_search_result(text) {
+            Ok(v) => v,
+            Err(e) => {
+                debug!("could not parse broadcast response: {e}");
+                continue;
+            }
+        };
 
         let (service_type, control_schema_url, control_url) =
-            match get_control_urls(&addr, &root_url, max_time - start.elapsed()) {
+            match get_control_urls(&addr, &root_url, max_time.saturating_sub(start.elapsed())) {
                 Ok(o) => o,
                 Err(e) => {
                     debug!(
@@ -60,7 +83,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
                 }
             };
 
-        let control_schema = match get_schemas(&addr, &control_schema_url, max_time - start.elapsed()) {
+        let control_schema = match get_schemas(&addr, &control_schema_url, max_time.saturating_sub(start.elapsed())) {
             Ok(o) => o,
             Err(e) => {
                 debug!(
