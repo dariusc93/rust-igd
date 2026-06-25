@@ -132,8 +132,9 @@ async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result
         addr,
         socket.local_addr()
     );
+    let request = messages::search_request(&addr);
     socket
-        .send_to(messages::SEARCH_REQUEST.as_bytes(), &addr)
+        .send_to(request.as_bytes(), &addr)
         .map_ok(|_| ())
         .map_err(SearchError::from)
         .await

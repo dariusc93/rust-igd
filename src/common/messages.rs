@@ -1,12 +1,18 @@
 use crate::PortMappingProtocol;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
-// Content of the request.
-pub const SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r
-Host:239.255.255.250:1900\r
-ST:urn:schemas-upnp-org:device:InternetGatewayDevice:1\r
-Man:\"ssdp:discover\"\r
-MX:3\r\n\r\n";
+/// Build the SSDP `M-SEARCH` discovery request, with the `HOST` header set to the multicast
+/// destination so it is correct for both IPv4 (eg `239.255.255.250:1900`) and IPv6
+/// (eg `[FF02::C]:1900`). Any IPv6 zone (scope) id on `host` is omitted from the header.
+pub fn search_request(host: &SocketAddr) -> String {
+    let host = match host.ip() {
+        IpAddr::V4(ip) => format!("{ip}:{}", host.port()),
+        IpAddr::V6(ip) => format!("[{ip}]:{}", host.port()),
+    };
+    format!(
+        "M-SEARCH * HTTP/1.1\r\nHost:{host}\r\nST:urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nMan:\"ssdp:discover\"\r\nMX:3\r\n\r\n"
+    )
+}
 
 // SOAP action names.
 pub const GET_EXTERNAL_IP_ACTION: &str = "GetExternalIPAddress";
@@ -258,6 +264,21 @@ pub fn format_get_firewall_status_message() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_request_host_ipv4() {
+        let req = search_request(&"239.255.255.250:1900".parse().unwrap());
+        assert!(req.starts_with("M-SEARCH * HTTP/1.1\r\n"));
+        assert!(req.contains("Host:239.255.255.250:1900\r\n"));
+    }
+
+    #[test]
+    fn search_request_host_ipv6_brackets_and_strips_scope() {
+        let req = search_request(&"[ff02::c%3]:1900".parse().unwrap());
+        // bracketed for IPv6, and the zone (scope) id is not included in the HOST header
+        assert!(req.contains("Host:[ff02::c]:1900\r\n"));
+        assert!(!req.contains("%3"));
+    }
 
     const PPP: &str = "urn:schemas-upnp-org:service:WANPPPConnection:1";
 

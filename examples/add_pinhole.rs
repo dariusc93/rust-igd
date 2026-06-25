@@ -33,7 +33,7 @@ fn main() {
         }
     }
 
-    // Open a TCP pinhole to the internal client with a one-hour lease (1..=86400 seconds).
+    // Open a TCP pinhole to the internal client with a one-hour lease (between 1 and 86_400 seconds).
     match gateway.add_pinhole(igd::PortMappingProtocol::TCP, internal_client, 3600) {
         Ok(unique_id) => {
             println!("AddPinhole successful, UniqueID = {unique_id}");

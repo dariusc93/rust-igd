@@ -5,6 +5,8 @@
 //! You can then communicate with the device via this object.
 
 // data structures
+#[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
+pub use self::common::options::{IPV6_SSDP_LINK_LOCAL, IPV6_SSDP_SITE_LOCAL};
 #[cfg(all(feature = "ipv6", any(feature = "io_sync", feature = "aio_tokio")))]
 pub use self::common::parsing::FirewallStatus;
 #[cfg(any(feature = "io_sync", feature = "aio_tokio"))]

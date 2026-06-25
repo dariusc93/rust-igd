@@ -35,7 +35,8 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 
     let response_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
 
-    socket.send_to(messages::SEARCH_REQUEST.as_bytes(), options.broadcast_address)?;
+    let request = messages::search_request(&options.broadcast_address);
+    socket.send_to(request.as_bytes(), options.broadcast_address)?;
 
     while start.elapsed() < max_time {
         let remaining = max_time.saturating_sub(start.elapsed());
