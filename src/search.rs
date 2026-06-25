@@ -113,7 +113,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 }
 
 fn get_control_urls(addr: &SocketAddr, root_url: &str, timeout: Duration) -> Result<parsing::DeviceUrls, SearchError> {
-    let url = format!("http://{}:{}{}", addr.ip(), addr.port(), root_url);
+    let url = format!("http://{addr}{root_url}");
     let response = match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => request_builder.timeout(timeout).send()?,
         Err(error) => return Err(SearchError::HttpError(error)),
@@ -134,7 +134,7 @@ fn get_schemas(
     control_schema_url: &str,
     timeout: Duration,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let url = format!("http://{}:{}{}", addr.ip(), addr.port(), control_schema_url);
+    let url = format!("http://{addr}{control_schema_url}");
     match RequestBuilder::try_new(Method::GET, url) {
         Ok(request_builder) => {
             let response = request_builder.timeout(timeout).send()?;

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
-use url::Url;
+use url::{Host, Url};
 use xmltree::{self, Element};
 
 use crate::errors::{
@@ -21,10 +21,14 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
             if let Some(colon) = line.find(':') {
                 let url_text = &line[colon + 1..].trim();
                 let url = Url::parse(url_text).map_err(|_| InvalidResponse)?;
-                let addr: IpAddr = url
-                    .host_str()
-                    .ok_or(InvalidResponse)
-                    .and_then(|s| s.parse().map_err(|_| InvalidResponse))?;
+                // Note that we use the typed host rather than `host_str()`, which returns the bracketed
+                // form (eg `[2001:db8::1]`) for IPv6 that `IpAddr` cannot parse, so an IPv6 gateway
+                // LOCATION is handled correctly.
+                let addr: IpAddr = match url.host() {
+                    Some(Host::Ipv4(addr)) => addr.into(),
+                    Some(Host::Ipv6(addr)) => addr.into(),
+                    _ => return Err(InvalidResponse),
+                };
                 let port: u16 = url.port_or_known_default().ok_or(InvalidResponse)?;
 
                 return Ok((SocketAddr::new(addr, port), url.path().to_string()));
@@ -553,6 +557,14 @@ fn test_parse_search_result_ok() {
     assert_eq!(result.0.ip(), IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
     assert_eq!(result.0.port(), 0);
     assert_eq!(&result.1[..], "/control_url");
+}
+
+#[test]
+fn test_parse_search_result_ipv6() {
+    let (addr, path) = parse_search_result("location:http://[2001:db8::1]:5000/desc.xml").unwrap();
+    assert_eq!(addr.ip(), IpAddr::V6("2001:db8::1".parse().unwrap()));
+    assert_eq!(addr.port(), 5000);
+    assert_eq!(&path[..], "/desc.xml");
 }
 
 #[test]
