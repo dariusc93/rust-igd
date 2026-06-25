@@ -95,6 +95,11 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
             }
         };
 
+        if !options.gateway_ip_version.accepts(addr.ip()) {
+            debug!("skipping gateway {}: not the requested IP version", addr);
+            continue;
+        }
+
         let urls = match get_control_urls(&addr, &root_url).await {
             Ok(v) => v,
             Err(e) => {

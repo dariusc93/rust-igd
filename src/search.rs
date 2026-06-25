@@ -72,6 +72,11 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
             }
         };
 
+        if !options.gateway_ip_version.accepts(addr.ip()) {
+            debug!("skipping gateway {addr}. Not the requested IP version");
+            continue;
+        }
+
         let urls = match get_control_urls(&addr, &root_url, max_time.saturating_sub(start.elapsed())) {
             Ok(o) => o,
             Err(e) => {

@@ -63,3 +63,45 @@ impl fmt::Display for PortMappingProtocol {
         )
     }
 }
+
+/// Which IP version of gateway to accept during discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GatewayIpVersion {
+    /// Only accept gateways reachable at an IPv4 address.
+    V4,
+    /// Only accept gateways reachable at an IPv6 address.
+    V6,
+    /// Accept gateways reachable at either an IPv4 or IPv6 address.
+    #[default]
+    Both,
+}
+
+impl GatewayIpVersion {
+    /// Whether a gateway advertising `IpAddr` matches this preference.
+    pub fn accepts(self, ip: std::net::IpAddr) -> bool {
+        match self {
+            GatewayIpVersion::V4 => ip.is_ipv4(),
+            GatewayIpVersion::V6 => ip.is_ipv6(),
+            GatewayIpVersion::Both => true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    #[test]
+    fn gateway_ip_version_accepts() {
+        let v4: IpAddr = "1.2.3.4".parse().unwrap();
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(GatewayIpVersion::V4.accepts(v4));
+        assert!(!GatewayIpVersion::V4.accepts(v6));
+        assert!(GatewayIpVersion::V6.accepts(v6));
+        assert!(!GatewayIpVersion::V6.accepts(v4));
+        assert!(GatewayIpVersion::Both.accepts(v4));
+        assert!(GatewayIpVersion::Both.accepts(v6));
+        assert_eq!(GatewayIpVersion::default(), GatewayIpVersion::Both);
+    }
+}

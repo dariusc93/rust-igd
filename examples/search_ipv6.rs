@@ -1,5 +1,5 @@
-use std::env;
 use igd_next as igd;
+use std::env;
 
 fn main() {
     let scope_id: u32 = match env::args().nth(1) {
