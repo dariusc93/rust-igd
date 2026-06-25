@@ -80,3 +80,7 @@ required-features = ["io_sync"]
 [[example]]
 name = "add_pinhole"
 required-features = ["io_sync", "ipv6"]
+
+[[example]]
+name = "search_ipv6"
+required-features = ["io_sync"]
