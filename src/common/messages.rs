@@ -8,6 +8,12 @@ ST:urn:schemas-upnp-org:device:InternetGatewayDevice:1\r
 Man:\"ssdp:discover\"\r
 MX:3\r\n\r\n";
 
+const ST_LIST: [&str; 3] = [
+    "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+    "urn:schemas-upnp-org:service:WANIPConnection:1",
+    "urn:schemas-upnp-org:service:WANPPPConnection:1",
+];
+
 // SOAP action names.
 pub const GET_EXTERNAL_IP_ACTION: &str = "GetExternalIPAddress";
 
@@ -171,6 +177,22 @@ pub fn formate_get_generic_port_mapping_entry_message(service_type: &str, port_m
         <NewPortMappingIndex>{port_mapping_index}</NewPortMappingIndex>
         </u:GetGenericPortMappingEntry>"#
     ))
+}
+
+pub fn search_requests() -> Vec<String> {
+    ST_LIST
+        .iter()
+        .map(|st| {
+            format!(
+                "M-SEARCH * HTTP/1.1\r
+Host:239.255.255.250:1900\r
+ST:{}\r
+Man:\"ssdp:discover\"\r
+MX:3\r\n\r\n",
+                st
+            )
+        })
+        .collect::<Vec<_>>()
 }
 
 #[cfg(test)]
