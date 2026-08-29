@@ -4,11 +4,11 @@ use std::str;
 use std::time::{Duration, Instant};
 
 use attohttpc::{Method, RequestBuilder};
-use log::{debug, warn};
+use log::debug;
 
 use crate::common::messages::search_requests;
 use crate::common::options::{DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
-use crate::common::{self, messages, parsing, SearchOptions};
+use crate::common::{self, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
 

@@ -1,13 +1,7 @@
 use crate::PortMappingProtocol;
 use std::net::SocketAddr;
 
-// Content of the request.
-pub const SEARCH_REQUEST: &str = "M-SEARCH * HTTP/1.1\r
-Host:239.255.255.250:1900\r
-ST:urn:schemas-upnp-org:device:InternetGatewayDevice:1\r
-Man:\"ssdp:discover\"\r
-MX:3\r\n\r\n";
-
+// Search targets (SSDP ST header) tried during discovery.
 const ST_LIST: [&str; 3] = [
     "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
     "urn:schemas-upnp-org:service:WANIPConnection:1",
