@@ -48,7 +48,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
         socket.set_read_timeout(Some(response_timeout.min(remaining)))?;
 
         let mut buf = [0u8; 1500];
-        let (read, _) = match socket.recv_from(&mut buf) {
+        let (read, from) = match socket.recv_from(&mut buf) {
             Ok(v) => v,
             Err(e) => {
                 debug!("error while receiving broadcast response: {e}");
@@ -71,6 +71,10 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
                 continue;
             }
         };
+
+        // A link-local LOCATION carries no zone id; inherit it from the response source so the
+        // gateway can be reached on the interface it answered on.
+        let addr = common::linklocal::apply_response_scope(addr, from);
 
         if !options.gateway_ip_version.accepts(addr.ip()) {
             debug!("skipping gateway {addr}. Not the requested IP version");
@@ -119,12 +123,16 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 }
 
 fn get_control_urls(addr: &SocketAddr, root_url: &str, timeout: Duration) -> Result<parsing::DeviceUrls, SearchError> {
-    let url = format!("http://{addr}{root_url}");
-    let response = match RequestBuilder::try_new(Method::GET, url) {
-        Ok(request_builder) => request_builder.timeout(timeout).send()?,
-        Err(error) => return Err(SearchError::HttpError(error)),
+    let body = if common::linklocal::is_scoped_link_local(addr) {
+        common::linklocal::raw_http_request(*addr, "GET", root_url, &[], None, timeout, MAX_RESPONSE_BYTES)?
+    } else {
+        let url = format!("http://{addr}{root_url}");
+        let response = match RequestBuilder::try_new(Method::GET, url) {
+            Ok(request_builder) => request_builder.timeout(timeout).send()?,
+            Err(error) => return Err(SearchError::HttpError(error)),
+        };
+        common::read_response_body(response, MAX_RESPONSE_BYTES)?
     };
-    let body = common::read_response_body(response, MAX_RESPONSE_BYTES)?;
     let (service_type, control_schema_url, control_url) = parsing::parse_control_urls(&body[..])?;
     Ok(parsing::DeviceUrls {
         service_type,
@@ -140,12 +148,15 @@ fn get_schemas(
     control_schema_url: &str,
     timeout: Duration,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let url = format!("http://{addr}{control_schema_url}");
-    match RequestBuilder::try_new(Method::GET, url) {
-        Ok(request_builder) => {
-            let response = request_builder.timeout(timeout).send()?;
-            parsing::parse_schemas(&common::read_response_body(response, MAX_RESPONSE_BYTES)?[..])
-        }
-        Err(error) => Err(SearchError::HttpError(error)),
-    }
+    let body = if common::linklocal::is_scoped_link_local(addr) {
+        common::linklocal::raw_http_request(*addr, "GET", control_schema_url, &[], None, timeout, MAX_RESPONSE_BYTES)?
+    } else {
+        let url = format!("http://{addr}{control_schema_url}");
+        let response = match RequestBuilder::try_new(Method::GET, url) {
+            Ok(request_builder) => request_builder.timeout(timeout).send()?,
+            Err(error) => return Err(SearchError::HttpError(error)),
+        };
+        common::read_response_body(response, MAX_RESPONSE_BYTES)?
+    };
+    parsing::parse_schemas(&body[..])
 }

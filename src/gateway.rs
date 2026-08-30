@@ -33,19 +33,31 @@ pub struct Gateway {
 
 impl Gateway {
     fn send_soap(&self, control_url: &str, header: &str, body: &str, ok: &str) -> RequestResult {
-        let url = format!("http://{}{}", self.addr, control_url);
-
-        let response = match RequestBuilder::try_new(Method::POST, url) {
-            Ok(request_builder) => request_builder
-                .timeout(DEFAULT_REQUEST_TIMEOUT)
-                .header("SOAPAction", header)
-                .header("Content-Type", "text/xml")
-                .text(body)
-                .send()?,
-            Err(e) => return Err(AttoHttpError(e)),
+        // A link-local gateway can only be reached on a specific interface (the address's zone id),
+        // which a URL cannot carry, so connect to the scoped address directly instead of attohttpc.
+        let bytes = if common::linklocal::is_scoped_link_local(&self.addr) {
+            common::linklocal::raw_http_request(
+                self.addr,
+                "POST",
+                control_url,
+                &[("SOAPAction", header), ("Content-Type", "text/xml")],
+                Some(body),
+                DEFAULT_REQUEST_TIMEOUT,
+                MAX_RESPONSE_BYTES,
+            )?
+        } else {
+            let url = format!("http://{}{}", self.addr, control_url);
+            let response = match RequestBuilder::try_new(Method::POST, url) {
+                Ok(request_builder) => request_builder
+                    .timeout(DEFAULT_REQUEST_TIMEOUT)
+                    .header("SOAPAction", header)
+                    .header("Content-Type", "text/xml")
+                    .text(body)
+                    .send()?,
+                Err(e) => return Err(AttoHttpError(e)),
+            };
+            common::read_response_body(response, MAX_RESPONSE_BYTES)?
         };
-
-        let bytes = common::read_response_body(response, MAX_RESPONSE_BYTES)?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         parsing::parse_response(text, ok)
     }

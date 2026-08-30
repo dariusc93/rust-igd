@@ -1,3 +1,4 @@
+pub mod linklocal;
 pub mod messages;
 pub mod options;
 pub mod parsing;
