@@ -40,39 +40,83 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
 
 /// Parse the device description, returning `(service_type, control_schema_url, control_url)`
 /// for the first supported WAN connection service found.
+#[cfg(test)]
 pub fn parse_control_urls<R>(resp: R) -> Result<(String, String, String), SearchError>
+where
+    R: io::Read,
+{
+    let urls = parse_device_urls(resp)?;
+    let wan = urls.wan.ok_or(SearchError::InvalidResponse)?;
+    Ok((wan.service_type, wan.control_schema_url, wan.control_url))
+}
+
+/// Service URLs extracted from a device description document during discovery.
+pub struct DeviceUrls {
+    /// The WAN connection service, if the device exposes one.
+    pub wan: Option<WanConnectionUrls>,
+    /// Control URL of the IPv6 firewall service, if the device exposes one.
+    #[cfg(feature = "ipv6")]
+    pub ipv6_firewall_control_url: Option<String>,
+}
+
+/// URLs for a WAN connection service.
+pub struct WanConnectionUrls {
+    /// Service type of the WAN connection service.
+    pub service_type: String,
+    /// SCPD URL of the WAN connection service.
+    pub control_schema_url: String,
+    /// Control URL of the WAN connection service.
+    pub control_url: String,
+}
+
+/// Parse the available WAN connection and IPv6 firewall services.
+pub fn parse_device_urls<R>(resp: R) -> Result<DeviceUrls, SearchError>
 where
     R: io::Read,
 {
     let root = Element::parse(resp)?;
 
-    let mut urls = root.children.iter().filter_map(|child| {
+    let wan = root.children.iter().find_map(|child| {
         let child = child.as_element()?;
         if child.name == "device" {
-            Some(parse_device(child)?)
+            parse_device(child)
         } else {
             None
         }
     });
 
-    urls.next().ok_or(SearchError::InvalidResponse)
-}
-
-/// Service URLs extracted from a device description document during discovery.
-pub struct DeviceUrls {
-    /// Service type of the matched WAN connection service.
-    pub service_type: String,
-    /// SCPD (schema) URL of the matched WAN connection service.
-    pub control_schema_url: String,
-    /// Control URL of the matched WAN connection service.
-    pub control_url: String,
-    /// Control URL of the `WANIPv6FirewallControl` service, if the device exposes one.
     #[cfg(feature = "ipv6")]
-    pub ipv6_firewall_control_url: Option<String>,
+    let ipv6_firewall_control_url = root.children.iter().find_map(|child| {
+        let device = child.as_element()?;
+        if device.name == "device" {
+            find_firewall_control_url(device)
+        } else {
+            None
+        }
+    });
+
+    #[cfg(feature = "ipv6")]
+    if wan.is_none() && ipv6_firewall_control_url.is_none() {
+        return Err(SearchError::InvalidResponse);
+    }
+    #[cfg(not(feature = "ipv6"))]
+    if wan.is_none() {
+        return Err(SearchError::InvalidResponse);
+    }
+
+    Ok(DeviceUrls {
+        wan: wan.map(|(service_type, control_schema_url, control_url)| WanConnectionUrls {
+            service_type,
+            control_schema_url,
+            control_url,
+        }),
+        #[cfg(feature = "ipv6")]
+        ipv6_firewall_control_url,
+    })
 }
 
 /// Find the control URL of the `WANIPv6FirewallControl:1` service in a device description.
-#[cfg(feature = "ipv6")]
+#[cfg(all(test, feature = "ipv6"))]
 pub fn parse_firewall_control_url<R>(resp: R) -> Option<String>
 where
     R: io::Read,

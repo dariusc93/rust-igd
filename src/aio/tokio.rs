@@ -12,11 +12,26 @@ use std::net::SocketAddr;
 use tokio::{net::UdpSocket, time::timeout};
 
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
+#[cfg(feature = "ipv6")]
+use crate::aio::Ipv6FirewallGateway;
 use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
 use crate::common::{messages, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::{aio::Gateway, RequestError};
 use log::debug;
+
+enum SearchTarget {
+    Wan,
+    #[cfg(feature = "ipv6")]
+    Firewall,
+}
+
+struct DiscoveredDevice {
+    addr: SocketAddr,
+    root_url: String,
+    urls: parsing::DeviceUrls,
+    control_schema: Option<HashMap<String, Vec<String>>>,
+}
 
 /// Tokio provider for the [`Gateway`].
 #[derive(Debug, Clone)]
@@ -63,9 +78,43 @@ impl Provider for Tokio {
 
 /// Search for a gateway with the provided options.
 pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, SearchError> {
+    let discovered = search_device(options, SearchTarget::Wan).await?;
+    let wan = discovered.urls.wan.ok_or(SearchError::InvalidResponse)?;
+    let control_schema = discovered.control_schema.ok_or(SearchError::InvalidResponse)?;
+    Ok(Gateway {
+        addr: discovered.addr,
+        root_url: discovered.root_url,
+        control_url: wan.control_url,
+        control_schema_url: wan.control_schema_url,
+        control_schema,
+        service_type: wan.service_type,
+        #[cfg(feature = "ipv6")]
+        ipv6_firewall_control_url: discovered.urls.ipv6_firewall_control_url,
+        provider: Tokio,
+    })
+}
+
+/// Search for a gateway that exposes an IPv6 firewall service.
+///
+/// Use `SearchOptions::ipv6(scope_id)` to search over an IPv6 link.
+#[cfg(feature = "ipv6")]
+pub async fn search_ipv6_firewall_gateway(options: SearchOptions) -> Result<Ipv6FirewallGateway<Tokio>, SearchError> {
+    let discovered = search_device(options, SearchTarget::Firewall).await?;
+    let control_url = discovered
+        .urls
+        .ipv6_firewall_control_url
+        .ok_or(SearchError::InvalidResponse)?;
+    Ok(Ipv6FirewallGateway::new(
+        discovered.addr,
+        discovered.root_url,
+        control_url,
+    ))
+}
+
+async fn search_device(options: SearchOptions, target: SearchTarget) -> Result<DiscoveredDevice, SearchError> {
     let search_timeout = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
-    match timeout(search_timeout, search_gateway_inner(options)).await {
-        Ok(Ok(gateway)) => Ok(gateway),
+    match timeout(search_timeout, discover(options, target)).await {
+        Ok(Ok(discovered)) => Ok(discovered),
         Ok(Err(err)) => Err(err),
         Err(_err) => {
             // Timeout
@@ -74,7 +123,7 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, Se
     }
 }
 
-async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, SearchError> {
+async fn discover(options: SearchOptions, target: SearchTarget) -> Result<DiscoveredDevice, SearchError> {
     // Create socket for future calls
     let mut socket = UdpSocket::bind(&options.bind_addr).await?;
 
@@ -118,24 +167,33 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
             }
         };
 
-        let control_schema = match get_control_schemas(&addr, &urls.control_schema_url).await {
-            Ok(v) => v,
-            Err(e) => {
-                debug!("error getting control schemas: {}", e);
-                continue;
+        let control_schema = match target {
+            SearchTarget::Wan => {
+                let Some(wan) = urls.wan.as_ref() else {
+                    continue;
+                };
+                match get_control_schemas(&addr, &wan.control_schema_url).await {
+                    Ok(schema) => Some(schema),
+                    Err(e) => {
+                        debug!("error getting control schemas: {}", e);
+                        continue;
+                    }
+                }
+            }
+            #[cfg(feature = "ipv6")]
+            SearchTarget::Firewall => {
+                if urls.ipv6_firewall_control_url.is_none() {
+                    continue;
+                }
+                None
             }
         };
 
-        return Ok(Gateway {
+        return Ok(DiscoveredDevice {
             addr,
             root_url,
-            control_url: urls.control_url,
-            control_schema_url: urls.control_schema_url,
+            urls,
             control_schema,
-            service_type: urls.service_type,
-            #[cfg(feature = "ipv6")]
-            ipv6_firewall_control_url: urls.ipv6_firewall_control_url,
-            provider: Tokio,
         });
     }
 }
@@ -200,14 +258,7 @@ async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<parsing::Devi
     };
 
     debug!("handling control response from: {addr}");
-    let (service_type, control_schema_url, control_url) = parsing::parse_control_urls(std::io::Cursor::new(&resp))?;
-    Ok(parsing::DeviceUrls {
-        service_type,
-        control_schema_url,
-        control_url,
-        #[cfg(feature = "ipv6")]
-        ipv6_firewall_control_url: parsing::parse_firewall_control_url(std::io::Cursor::new(&resp)),
-    })
+    parsing::parse_device_urls(std::io::Cursor::new(&resp))
 }
 
 async fn get_control_schemas(
@@ -279,7 +330,7 @@ async fn raw_http_request(
             .to_bytes();
         Ok::<Vec<u8>, RequestError>(bytes.to_vec())
     };
-    
+
     let mut request = std::pin::pin!(request);
     let mut conn = std::pin::pin!(conn);
     let mut conn_done = false;

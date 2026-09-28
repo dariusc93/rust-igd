@@ -24,16 +24,14 @@ pub const IPV6_SSDP_SITE_LOCAL: Ipv6Addr = Ipv6Addr::new(0xff05, 0, 0, 0, 0, 0, 
 /// SearchOptions::default() should suffice for most situations.
 ///
 /// # Example
-/// To customize only a few options you can use `Default::default()` or `SearchOptions::default()` and the
-/// [struct update syntax](https://doc.rust-lang.org/book/ch05-01-defining-structs.html#creating-instances-from-other-instances-with-struct-update-syntax).
+/// To customize options, start with `SearchOptions::default()` and assign fields.
 /// ```
 /// # use std::time::Duration;
 /// # use igd_next::SearchOptions;
-/// let opts = SearchOptions {
-///     timeout: Some(Duration::from_secs(60)),
-///     ..Default::default()
-/// };
+/// let mut opts = SearchOptions::default();
+/// opts.timeout = Some(Duration::from_secs(60));
 /// ```
+#[non_exhaustive]
 pub struct SearchOptions {
     /// Bind address for UDP socket (defaults to all `0.0.0.0`)
     pub bind_addr: SocketAddr,
@@ -66,10 +64,8 @@ impl SearchOptions {
     /// by `scope_id` (its zone index such as from `if_nametoindex`, or the `if-addrs` crate). A
     /// scope id is required for link-local multicast because it has no routing.
     ///
-    /// Note: a gateway that advertises a *link-local* (`FE80::`) `LOCATION` is not currently
-    /// reachable, because the HTTP clients used for the follow-up control requests cannot carry an
-    /// IPv6 zone id in a URL. Discovery works for gateways advertising a globally-routable (or ULA)
-    /// address.
+    /// A gateway that advertises a link-local `LOCATION` is reached through the interface that
+    /// received its SSDP response.
     ///
     /// # Example
     /// ```

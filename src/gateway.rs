@@ -31,40 +31,52 @@ pub struct Gateway {
     pub ipv6_firewall_control_url: Option<String>,
 }
 
-impl Gateway {
-    fn send_soap(&self, control_url: &str, header: &str, body: &str, ok: &str) -> RequestResult {
-        // A link-local gateway can only be reached on a specific interface (the address's zone id),
-        // which a URL cannot carry, so connect to the scoped address directly instead of attohttpc.
-        let bytes = if common::linklocal::is_scoped_link_local(&self.addr) {
-            common::linklocal::raw_http_request(
-                self.addr,
-                "POST",
-                control_url,
-                &[("SOAPAction", header), ("Content-Type", "text/xml")],
-                Some(body),
-                DEFAULT_REQUEST_TIMEOUT,
-                MAX_RESPONSE_BYTES,
-            )?
-        } else {
-            let url = format!("http://{}{}", self.addr, control_url);
-            let response = match RequestBuilder::try_new(Method::POST, url) {
-                Ok(request_builder) => request_builder
-                    .timeout(DEFAULT_REQUEST_TIMEOUT)
-                    .header("SOAPAction", header)
-                    .header("Content-Type", "text/xml")
-                    .text(body)
-                    .send()?,
-                Err(e) => return Err(AttoHttpError(e)),
-            };
-            common::read_response_body(response, MAX_RESPONSE_BYTES)?
-        };
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        parsing::parse_response(text, ok)
-    }
+#[cfg(feature = "ipv6")]
+/// A handle to a gateway's IPv6 firewall service.
+#[derive(Clone, Debug)]
+pub struct Ipv6FirewallGateway {
+    /// Address used to reach the gateway.
+    pub addr: SocketAddr,
+    /// Path to the device description.
+    pub root_url: String,
+    /// Control URL for the IPv6 firewall service.
+    pub control_url: String,
+}
 
+fn send_soap(addr: SocketAddr, control_url: &str, header: &str, body: &str, ok: &str) -> RequestResult {
+    // A link-local gateway can only be reached on a specific interface (the address's zone id),
+    // which a URL cannot carry, so connect to the scoped address directly instead of attohttpc.
+    let bytes = if common::linklocal::is_scoped_link_local(&addr) {
+        common::linklocal::raw_http_request(
+            addr,
+            "POST",
+            control_url,
+            &[("SOAPAction", header), ("Content-Type", "text/xml")],
+            Some(body),
+            DEFAULT_REQUEST_TIMEOUT,
+            MAX_RESPONSE_BYTES,
+        )?
+    } else {
+        let url = format!("http://{addr}{control_url}");
+        let response = match RequestBuilder::try_new(Method::POST, url) {
+            Ok(request_builder) => request_builder
+                .timeout(DEFAULT_REQUEST_TIMEOUT)
+                .header("SOAPAction", header)
+                .header("Content-Type", "text/xml")
+                .text(body)
+                .send()?,
+            Err(e) => return Err(AttoHttpError(e)),
+        };
+        common::read_response_body(response, MAX_RESPONSE_BYTES)?
+    };
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    parsing::parse_response(text, ok)
+}
+
+impl Gateway {
     fn perform_request(&self, action: &str, body: &str, ok: &str) -> RequestResult {
         let header = messages::soap_action(&self.service_type, action);
-        self.send_soap(&self.control_url, &header, body, ok)
+        send_soap(self.addr, &self.control_url, &header, body, ok)
     }
 
     /// Get the external IP address of the gateway.
@@ -279,9 +291,15 @@ impl Gateway {
     }
 
     #[cfg(feature = "ipv6")]
-    fn firewall_request(&self, control_url: &str, action: &str, body: &str, ok: &str) -> RequestResult {
-        let header = messages::soap_action(messages::WAN_IPV6_FIREWALL_CONTROL, action);
-        self.send_soap(control_url, &header, body, ok)
+    /// Get a handle to this gateway's IPv6 firewall service, if it exposes one.
+    pub fn ipv6_firewall(&self) -> Option<Ipv6FirewallGateway> {
+        self.ipv6_firewall_control_url
+            .as_ref()
+            .map(|control_url| Ipv6FirewallGateway {
+                addr: self.addr,
+                root_url: self.root_url.clone(),
+                control_url: control_url.clone(),
+            })
     }
 
     /// Open an IPv6 firewall pinhole allowing inbound traffic to `internal_client`.
@@ -303,12 +321,59 @@ impl Gateway {
         if !(1..=86400).contains(&lease_duration) {
             return Err(errors::PinholeError::InvalidLeaseDuration);
         }
-        let control_url = self
-            .ipv6_firewall_control_url
-            .as_deref()
-            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
+        self.ipv6_firewall()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?
+            .add_pinhole(protocol, internal_client, lease_duration)
+    }
+
+    /// Extend the lease of an existing pinhole identified by its `UniqueID`.
+    #[cfg(feature = "ipv6")]
+    pub fn update_pinhole(&self, unique_id: u16, lease_duration: u32) -> Result<(), errors::PinholeError> {
+        if !(1..=86400).contains(&lease_duration) {
+            return Err(errors::PinholeError::InvalidLeaseDuration);
+        }
+        self.ipv6_firewall()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?
+            .update_pinhole(unique_id, lease_duration)
+    }
+
+    /// Remove an existing pinhole identified by its `UniqueID`.
+    #[cfg(feature = "ipv6")]
+    pub fn remove_pinhole(&self, unique_id: u16) -> Result<(), errors::PinholeError> {
+        self.ipv6_firewall()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?
+            .remove_pinhole(unique_id)
+    }
+
+    /// Query whether the gateway's IPv6 firewall is enabled and whether inbound pinholes are allowed.
+    #[cfg(feature = "ipv6")]
+    pub fn get_firewall_status(&self) -> Result<parsing::FirewallStatus, errors::PinholeError> {
+        self.ipv6_firewall()
+            .ok_or(errors::PinholeError::FirewallControlUnavailable)?
+            .get_firewall_status()
+    }
+}
+
+#[cfg(feature = "ipv6")]
+impl Ipv6FirewallGateway {
+    fn firewall_request(&self, action: &str, body: &str, ok: &str) -> RequestResult {
+        let header = messages::soap_action(messages::WAN_IPV6_FIREWALL_CONTROL, action);
+        send_soap(self.addr, &self.control_url, &header, body, ok)
+    }
+
+    /// Open a pinhole to an IPv6 client from any remote host and port.
+    ///
+    /// The lease duration must be between 1 and 86400 seconds.
+    pub fn add_pinhole(
+        &self,
+        protocol: PortMappingProtocol,
+        internal_client: std::net::SocketAddrV6,
+        lease_duration: u32,
+    ) -> Result<u16, errors::PinholeError> {
+        if !(1..=86400).contains(&lease_duration) {
+            return Err(errors::PinholeError::InvalidLeaseDuration);
+        }
         let result = self.firewall_request(
-            control_url,
             messages::ADD_PINHOLE_ACTION,
             &messages::format_add_pinhole_message(
                 "",
@@ -323,18 +388,12 @@ impl Gateway {
         parsing::parse_add_pinhole_response(result)
     }
 
-    /// Extend the lease of an existing pinhole identified by its `UniqueID`.
-    #[cfg(feature = "ipv6")]
+    /// Extend the lease of a pinhole by its unique ID.
     pub fn update_pinhole(&self, unique_id: u16, lease_duration: u32) -> Result<(), errors::PinholeError> {
         if !(1..=86400).contains(&lease_duration) {
             return Err(errors::PinholeError::InvalidLeaseDuration);
         }
-        let control_url = self
-            .ipv6_firewall_control_url
-            .as_deref()
-            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
         let result = self.firewall_request(
-            control_url,
             messages::UPDATE_PINHOLE_ACTION,
             &messages::format_update_pinhole_message(unique_id, lease_duration),
             "UpdatePinholeResponse",
@@ -342,15 +401,9 @@ impl Gateway {
         parsing::parse_pinhole_unit_response(result)
     }
 
-    /// Remove an existing pinhole identified by its `UniqueID`.
-    #[cfg(feature = "ipv6")]
+    /// Remove a pinhole by its unique ID.
     pub fn remove_pinhole(&self, unique_id: u16) -> Result<(), errors::PinholeError> {
-        let control_url = self
-            .ipv6_firewall_control_url
-            .as_deref()
-            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
         let result = self.firewall_request(
-            control_url,
             messages::DELETE_PINHOLE_ACTION,
             &messages::format_delete_pinhole_message(unique_id),
             "DeletePinholeResponse",
@@ -358,15 +411,9 @@ impl Gateway {
         parsing::parse_pinhole_unit_response(result)
     }
 
-    /// Query whether the gateway's IPv6 firewall is enabled and whether inbound pinholes are allowed.
-    #[cfg(feature = "ipv6")]
+    /// Query whether the firewall is enabled and allows inbound pinholes.
     pub fn get_firewall_status(&self) -> Result<parsing::FirewallStatus, errors::PinholeError> {
-        let control_url = self
-            .ipv6_firewall_control_url
-            .as_deref()
-            .ok_or(errors::PinholeError::FirewallControlUnavailable)?;
         let result = self.firewall_request(
-            control_url,
             messages::GET_FIREWALL_STATUS_ACTION,
             &messages::format_get_firewall_status_message(),
             "GetFirewallStatusResponse",

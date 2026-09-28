@@ -24,10 +24,14 @@ pub use self::errors::{
 pub use self::errors::{Error, Result};
 #[cfg(feature = "io_sync")]
 pub use self::gateway::Gateway;
+#[cfg(all(feature = "io_sync", feature = "ipv6"))]
+pub use self::gateway::Ipv6FirewallGateway;
 
 // search of gateway
 #[cfg(feature = "io_sync")]
 pub use self::search::search_gateway;
+#[cfg(all(feature = "io_sync", feature = "ipv6"))]
+pub use self::search::search_ipv6_firewall_gateway;
 
 #[cfg(feature = "aio_tokio")]
 pub mod aio;
