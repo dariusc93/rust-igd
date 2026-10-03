@@ -120,11 +120,12 @@ fn dechunk(mut body: &[u8]) -> std::io::Result<Vec<u8>> {
         if size == 0 {
             break;
         }
-        if body.len() < size + 2 {
+        let chunk_end = size.checked_add(2).ok_or_else(err)?;
+        if body.len() < chunk_end || &body[size..chunk_end] != b"\r\n" {
             return Err(err());
         }
         out.extend_from_slice(&body[..size]);
-        body = &body[size + 2..]; // skip the chunk data and its trailing CRLF
+        body = &body[chunk_end..]; // skip the chunk data and its trailing CRLF
     }
     Ok(out)
 }

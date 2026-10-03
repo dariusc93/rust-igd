@@ -235,6 +235,10 @@ pub enum Error {
     /// `RemovePortError`
     #[error("{0}")]
     RemovePortError(#[from] RemovePortError),
+    /// An IPv6 firewall pinhole error.
+    #[cfg(feature = "ipv6")]
+    #[error("{0}")]
+    PinholeError(#[from] PinholeError),
     /// `RequestError`
     #[error("{0}")]
     RequestError(#[from] RequestError),
