@@ -6,8 +6,9 @@ use std::time::{Duration, Instant};
 use attohttpc::{Method, RequestBuilder};
 use log::debug;
 
+use crate::common::messages::search_requests;
 use crate::common::options::{DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
-use crate::common::{self, messages, parsing, SearchOptions};
+use crate::common::{self, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
 #[cfg(feature = "ipv6")]
@@ -83,8 +84,20 @@ fn discover(options: SearchOptions, target: SearchTarget) -> Result<DiscoveredDe
 
     let response_timeout = options.single_search_timeout.unwrap_or(RESPONSE_TIMEOUT);
 
-    let request = messages::search_request(&options.broadcast_address);
-    socket.send_to(request.as_bytes(), options.broadcast_address)?;
+    let mut sent_any = false;
+    let mut last_send_error: Option<std::io::Error> = None;
+    for request in search_requests(&options.broadcast_address) {
+        match socket.send_to(request.as_bytes(), options.broadcast_address) {
+            Ok(_) => sent_any = true,
+            Err(e) => {
+                debug!("failed to send search request: {e}");
+                last_send_error = Some(e);
+            }
+        }
+    }
+    if !sent_any {
+        return Err(last_send_error.expect("at least one send attempt failed").into());
+    }
 
     while start.elapsed() < max_time {
         let remaining = max_time.saturating_sub(start.elapsed());

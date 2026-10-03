@@ -1,17 +1,26 @@
 use crate::PortMappingProtocol;
 use std::net::{IpAddr, SocketAddr};
 
-/// Build the SSDP `M-SEARCH` discovery request, with the `HOST` header set to the multicast
-/// destination so it is correct for both IPv4 (eg `239.255.255.250:1900`) and IPv6
-/// (eg `[FF02::C]:1900`). Any IPv6 zone (scope) id on `host` is omitted from the header.
-pub fn search_request(host: &SocketAddr) -> String {
+// SSDP targets used during discovery.
+const ST_LIST: &[&str] = &[
+    "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+    "urn:schemas-upnp-org:service:WANIPConnection:1",
+    "urn:schemas-upnp-org:service:WANPPPConnection:1",
+    #[cfg(feature = "ipv6")]
+    "urn:schemas-upnp-org:service:WANIPv6FirewallControl:1",
+];
+
+/// Build an SSDP request for one target using the chosen multicast address.
+fn search_request(host: &SocketAddr, target: &str) -> String {
     let host = match host.ip() {
         IpAddr::V4(ip) => format!("{ip}:{}", host.port()),
         IpAddr::V6(ip) => format!("[{ip}]:{}", host.port()),
     };
-    format!(
-        "M-SEARCH * HTTP/1.1\r\nHost:{host}\r\nST:urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\nMan:\"ssdp:discover\"\r\nMX:3\r\n\r\n"
-    )
+    format!("M-SEARCH * HTTP/1.1\r\nHost:{host}\r\nST:{target}\r\nMan:\"ssdp:discover\"\r\nMX:3\r\n\r\n")
+}
+
+pub fn search_requests(host: &SocketAddr) -> Vec<String> {
+    ST_LIST.iter().map(|target| search_request(host, target)).collect()
 }
 
 // SOAP action names.
@@ -179,7 +188,7 @@ pub fn formate_get_generic_port_mapping_entry_message(service_type: &str, port_m
     ))
 }
 
-// --- IPv6 firewall pinhole messages (WANIPv6FirewallControl:1, IGD:2) ---
+// IPv6 firewall pinhole messages.
 
 /// Service type of the IGD:2 IPv6 firewall control service.
 #[cfg(feature = "ipv6")]
@@ -267,14 +276,20 @@ mod tests {
 
     #[test]
     fn search_request_host_ipv4() {
-        let req = search_request(&"239.255.255.250:1900".parse().unwrap());
+        let req = search_request(
+            &"239.255.255.250:1900".parse().unwrap(),
+            "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+        );
         assert!(req.starts_with("M-SEARCH * HTTP/1.1\r\n"));
         assert!(req.contains("Host:239.255.255.250:1900\r\n"));
     }
 
     #[test]
     fn search_request_host_ipv6_brackets_and_strips_scope() {
-        let req = search_request(&"[ff02::c%3]:1900".parse().unwrap());
+        let req = search_request(
+            &"[ff02::c%3]:1900".parse().unwrap(),
+            "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+        );
         // bracketed for IPv6, and the zone (scope) id is not included in the HOST header
         assert!(req.contains("Host:[ff02::c]:1900\r\n"));
         assert!(!req.contains("%3"));
