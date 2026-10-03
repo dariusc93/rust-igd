@@ -12,8 +12,9 @@ use std::net::SocketAddr;
 use tokio::{net::UdpSocket, time::timeout};
 
 use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
+use crate::common::messages::search_requests;
 use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
-use crate::common::{messages, parsing, SearchOptions};
+use crate::common::{parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::{aio::Gateway, RequestError};
 use log::debug;
@@ -123,18 +124,30 @@ async fn search_gateway_inner(options: SearchOptions) -> Result<Gateway<Tokio>, 
     }
 }
 
-// Create a new search.
+// Send an M-SEARCH for every search target; fails only if none could be sent.
 async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result<(), SearchError> {
     debug!(
         "sending broadcast request to: {} on interface: {:?}",
         addr,
         socket.local_addr()
     );
-    socket
-        .send_to(messages::SEARCH_REQUEST.as_bytes(), &addr)
-        .map_ok(|_| ())
-        .map_err(SearchError::from)
-        .await
+
+    let mut sent_any = false;
+    let mut last_send_error: Option<std::io::Error> = None;
+    for request in search_requests() {
+        match socket.send_to(request.as_bytes(), &addr).await {
+            Ok(_) => sent_any = true,
+            Err(e) => {
+                debug!("failed to send search request: {e}");
+                last_send_error = Some(e);
+            }
+        }
+    }
+    if sent_any {
+        Ok(())
+    } else {
+        Err(last_send_error.expect("at least one send attempt failed").into())
+    }
 }
 
 async fn receive_search_response(socket: &mut UdpSocket) -> Result<(Vec<u8>, SocketAddr), SearchError> {
