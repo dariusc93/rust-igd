@@ -11,6 +11,21 @@ use crate::common::options::{DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEO
 use crate::common::{self, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
+#[cfg(feature = "ipv6")]
+use crate::gateway::Ipv6FirewallGateway;
+
+enum SearchTarget {
+    Wan,
+    #[cfg(feature = "ipv6")]
+    Firewall,
+}
+
+struct DiscoveredDevice {
+    addr: SocketAddr,
+    root_url: String,
+    urls: parsing::DeviceUrls,
+    control_schema: Option<HashMap<String, Vec<String>>>,
+}
 
 /// Search gateway, using the given `SearchOptions`.
 ///
@@ -29,6 +44,39 @@ use crate::gateway::Gateway;
 /// }
 /// ```
 pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
+    let discovered = discover(options, SearchTarget::Wan)?;
+    let wan = discovered.urls.wan.ok_or(SearchError::InvalidResponse)?;
+    let control_schema = discovered.control_schema.ok_or(SearchError::InvalidResponse)?;
+    Ok(Gateway {
+        addr: discovered.addr,
+        root_url: discovered.root_url,
+        control_url: wan.control_url,
+        control_schema_url: wan.control_schema_url,
+        control_schema,
+        service_type: wan.service_type,
+        #[cfg(feature = "ipv6")]
+        ipv6_firewall_control_url: discovered.urls.ipv6_firewall_control_url,
+    })
+}
+
+/// Search for a gateway that exposes an IPv6 firewall service.
+///
+/// Use `SearchOptions::ipv6(scope_id)` to search over an IPv6 link.
+#[cfg(feature = "ipv6")]
+pub fn search_ipv6_firewall_gateway(options: SearchOptions) -> Result<Ipv6FirewallGateway, SearchError> {
+    let discovered = discover(options, SearchTarget::Firewall)?;
+    let control_url = discovered
+        .urls
+        .ipv6_firewall_control_url
+        .ok_or(SearchError::InvalidResponse)?;
+    Ok(Ipv6FirewallGateway {
+        addr: discovered.addr,
+        root_url: discovered.root_url,
+        control_url,
+    })
+}
+
+fn discover(options: SearchOptions, target: SearchTarget) -> Result<DiscoveredDevice, SearchError> {
     let start = Instant::now();
     let max_time = options.timeout.unwrap_or(DEFAULT_TIMEOUT);
 
@@ -38,7 +86,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
 
     let mut sent_any = false;
     let mut last_send_error: Option<std::io::Error> = None;
-    for request in search_requests() {
+    for request in search_requests(&options.broadcast_address) {
         match socket.send_to(request.as_bytes(), options.broadcast_address) {
             Ok(_) => sent_any = true,
             Err(e) => {
@@ -48,7 +96,6 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
         }
     }
     if !sent_any {
-        // Not a single request left the socket, so there is nothing to wait for.
         return Err(last_send_error.expect("at least one send attempt failed").into());
     }
 
@@ -62,7 +109,7 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
         socket.set_read_timeout(Some(response_timeout.min(remaining)))?;
 
         let mut buf = [0u8; 1500];
-        let (read, _) = match socket.recv_from(&mut buf) {
+        let (read, from) = match socket.recv_from(&mut buf) {
             Ok(v) => v,
             Err(e) => {
                 debug!("error while receiving broadcast response: {e}");
@@ -86,55 +133,74 @@ pub fn search_gateway(options: SearchOptions) -> Result<Gateway, SearchError> {
             }
         };
 
-        let (service_type, control_schema_url, control_url) =
-            match get_control_urls(&addr, &root_url, max_time.saturating_sub(start.elapsed())) {
-                Ok(o) => o,
-                Err(e) => {
-                    debug!(
-                        "Error has occurred while getting control urls. error: {}, addr: {}, root_url: {}",
-                        e, addr, root_url
-                    );
-                    continue;
-                }
-            };
+        // A link-local LOCATION carries no zone id; inherit it from the response source so the
+        // gateway can be reached on the interface it answered on.
+        let addr = common::linklocal::apply_response_scope(addr, from);
 
-        let control_schema = match get_schemas(&addr, &control_schema_url, max_time.saturating_sub(start.elapsed())) {
+        if !options.gateway_ip_version.accepts(addr.ip()) {
+            debug!("skipping gateway {addr}. Not the requested IP version");
+            continue;
+        }
+
+        let urls = match get_control_urls(&addr, &root_url, max_time.saturating_sub(start.elapsed())) {
             Ok(o) => o,
             Err(e) => {
                 debug!(
-                    "Error has occurred while getting schemas. error: {}, addr: {}, control_schema_url: {}",
-                    e, addr, control_schema_url
+                    "Error has occurred while getting control urls. error: {}, addr: {}, root_url: {}",
+                    e, addr, root_url
                 );
                 continue;
             }
         };
 
-        return Ok(Gateway {
+        let control_schema = match target {
+            SearchTarget::Wan => {
+                let Some(wan) = urls.wan.as_ref() else {
+                    continue;
+                };
+                match get_schemas(&addr, &wan.control_schema_url, max_time.saturating_sub(start.elapsed())) {
+                    Ok(schema) => Some(schema),
+                    Err(e) => {
+                        debug!(
+                            "Error has occurred while getting schemas. error: {}, addr: {}, control_schema_url: {}",
+                            e, addr, wan.control_schema_url
+                        );
+                        continue;
+                    }
+                }
+            }
+            #[cfg(feature = "ipv6")]
+            SearchTarget::Firewall => {
+                if urls.ipv6_firewall_control_url.is_none() {
+                    continue;
+                }
+                None
+            }
+        };
+
+        return Ok(DiscoveredDevice {
             addr,
             root_url,
-            control_url,
-            control_schema_url,
+            urls,
             control_schema,
-            service_type,
         });
     }
 
     Err(SearchError::NoResponseWithinTimeout)
 }
 
-fn get_control_urls(
-    addr: &SocketAddr,
-    root_url: &str,
-    timeout: Duration,
-) -> Result<(String, String, String), SearchError> {
-    let url = format!("http://{}:{}{}", addr.ip(), addr.port(), root_url);
-    match RequestBuilder::try_new(Method::GET, url) {
-        Ok(request_builder) => {
-            let response = request_builder.timeout(timeout).send()?;
-            parsing::parse_control_urls(&common::read_response_body(response, MAX_RESPONSE_BYTES)?[..])
-        }
-        Err(error) => Err(SearchError::HttpError(error)),
-    }
+fn get_control_urls(addr: &SocketAddr, root_url: &str, timeout: Duration) -> Result<parsing::DeviceUrls, SearchError> {
+    let body = if common::linklocal::is_scoped_link_local(addr) {
+        common::linklocal::raw_http_request(*addr, "GET", root_url, &[], None, timeout, MAX_RESPONSE_BYTES)?
+    } else {
+        let url = format!("http://{addr}{root_url}");
+        let response = match RequestBuilder::try_new(Method::GET, url) {
+            Ok(request_builder) => request_builder.timeout(timeout).send()?,
+            Err(error) => return Err(SearchError::HttpError(error)),
+        };
+        common::read_response_body(response, MAX_RESPONSE_BYTES)?
+    };
+    parsing::parse_device_urls(&body[..])
 }
 
 fn get_schemas(
@@ -142,12 +208,15 @@ fn get_schemas(
     control_schema_url: &str,
     timeout: Duration,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let url = format!("http://{}:{}{}", addr.ip(), addr.port(), control_schema_url);
-    match RequestBuilder::try_new(Method::GET, url) {
-        Ok(request_builder) => {
-            let response = request_builder.timeout(timeout).send()?;
-            parsing::parse_schemas(&common::read_response_body(response, MAX_RESPONSE_BYTES)?[..])
-        }
-        Err(error) => Err(SearchError::HttpError(error)),
-    }
+    let body = if common::linklocal::is_scoped_link_local(addr) {
+        common::linklocal::raw_http_request(*addr, "GET", control_schema_url, &[], None, timeout, MAX_RESPONSE_BYTES)?
+    } else {
+        let url = format!("http://{addr}{control_schema_url}");
+        let response = match RequestBuilder::try_new(Method::GET, url) {
+            Ok(request_builder) => request_builder.timeout(timeout).send()?,
+            Err(error) => return Err(SearchError::HttpError(error)),
+        };
+        common::read_response_body(response, MAX_RESPONSE_BYTES)?
+    };
+    parsing::parse_schemas(&body[..])
 }

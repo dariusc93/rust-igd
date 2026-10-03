@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 
-use url::Url;
+use url::{Host, Url};
 use xmltree::{self, Element};
 
 use crate::errors::{
@@ -21,10 +21,14 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
             if let Some(colon) = line.find(':') {
                 let url_text = &line[colon + 1..].trim();
                 let url = Url::parse(url_text).map_err(|_| InvalidResponse)?;
-                let addr: IpAddr = url
-                    .host_str()
-                    .ok_or(InvalidResponse)
-                    .and_then(|s| s.parse().map_err(|_| InvalidResponse))?;
+                // Note that we use the typed host rather than `host_str()`, which returns the bracketed
+                // form (eg `[2001:db8::1]`) for IPv6 that `IpAddr` cannot parse, so an IPv6 gateway
+                // LOCATION is handled correctly.
+                let addr: IpAddr = match url.host() {
+                    Some(Host::Ipv4(addr)) => addr.into(),
+                    Some(Host::Ipv6(addr)) => addr.into(),
+                    _ => return Err(InvalidResponse),
+                };
                 let port: u16 = url.port_or_known_default().ok_or(InvalidResponse)?;
 
                 return Ok((SocketAddr::new(addr, port), url.path().to_string()));
@@ -36,22 +40,132 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
 
 /// Parse the device description, returning `(service_type, control_schema_url, control_url)`
 /// for the first supported WAN connection service found.
+#[cfg(test)]
 pub fn parse_control_urls<R>(resp: R) -> Result<(String, String, String), SearchError>
+where
+    R: io::Read,
+{
+    let urls = parse_device_urls(resp)?;
+    let wan = urls.wan.ok_or(SearchError::InvalidResponse)?;
+    Ok((wan.service_type, wan.control_schema_url, wan.control_url))
+}
+
+/// Service URLs extracted from a device description document during discovery.
+pub struct DeviceUrls {
+    /// The WAN connection service, if the device exposes one.
+    pub wan: Option<WanConnectionUrls>,
+    /// Control URL of the IPv6 firewall service, if the device exposes one.
+    #[cfg(feature = "ipv6")]
+    pub ipv6_firewall_control_url: Option<String>,
+}
+
+/// URLs for a WAN connection service.
+pub struct WanConnectionUrls {
+    /// Service type of the WAN connection service.
+    pub service_type: String,
+    /// SCPD URL of the WAN connection service.
+    pub control_schema_url: String,
+    /// Control URL of the WAN connection service.
+    pub control_url: String,
+}
+
+/// Parse the available WAN connection and IPv6 firewall services.
+pub fn parse_device_urls<R>(resp: R) -> Result<DeviceUrls, SearchError>
 where
     R: io::Read,
 {
     let root = Element::parse(resp)?;
 
-    let mut urls = root.children.iter().filter_map(|child| {
+    let wan = root.children.iter().find_map(|child| {
         let child = child.as_element()?;
         if child.name == "device" {
-            Some(parse_device(child)?)
+            parse_device(child)
         } else {
             None
         }
     });
 
-    urls.next().ok_or(SearchError::InvalidResponse)
+    #[cfg(feature = "ipv6")]
+    let ipv6_firewall_control_url = root.children.iter().find_map(|child| {
+        let device = child.as_element()?;
+        if device.name == "device" {
+            find_firewall_control_url(device)
+        } else {
+            None
+        }
+    });
+
+    #[cfg(feature = "ipv6")]
+    if wan.is_none() && ipv6_firewall_control_url.is_none() {
+        return Err(SearchError::InvalidResponse);
+    }
+    #[cfg(not(feature = "ipv6"))]
+    if wan.is_none() {
+        return Err(SearchError::InvalidResponse);
+    }
+
+    Ok(DeviceUrls {
+        wan: wan.map(|(service_type, control_schema_url, control_url)| WanConnectionUrls {
+            service_type,
+            control_schema_url,
+            control_url,
+        }),
+        #[cfg(feature = "ipv6")]
+        ipv6_firewall_control_url,
+    })
+}
+
+/// Find the control URL of the `WANIPv6FirewallControl:1` service in a device description.
+#[cfg(all(test, feature = "ipv6"))]
+pub fn parse_firewall_control_url<R>(resp: R) -> Option<String>
+where
+    R: io::Read,
+{
+    let root = Element::parse(resp).ok()?;
+    root.children.iter().find_map(|child| {
+        let device = child.as_element()?;
+        if device.name == "device" {
+            find_firewall_control_url(device)
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(feature = "ipv6")]
+fn find_firewall_control_url(device: &Element) -> Option<String> {
+    let from_services = device.get_child("serviceList").and_then(|service_list| {
+        service_list.children.iter().find_map(|child| {
+            let service = child.as_element()?;
+            if service.name != "service" {
+                return None;
+            }
+            let service_type = service.get_child("serviceType")?.get_text()?;
+            if service_type.as_ref() == "urn:schemas-upnp-org:service:WANIPv6FirewallControl:1" {
+                // Treat a missing or empty controlURL as "no usable firewall service" so callers
+                // get FirewallControlUnavailable rather than a request POSTed to the device root.
+                service
+                    .get_child("controlURL")
+                    .and_then(|c| c.get_text())
+                    .map(|s| s.into_owned())
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        })
+    });
+    from_services.or_else(|| {
+        device.get_child("deviceList").and_then(|device_list| {
+            device_list.children.iter().find_map(|child| {
+                let device = child.as_element()?;
+                if device.name == "device" {
+                    find_firewall_control_url(device)
+                } else {
+                    None
+                }
+            })
+        })
+    })
 }
 
 fn parse_device(device: &Element) -> Option<(String, String, String)> {
@@ -399,6 +513,82 @@ pub fn parse_get_generic_port_mapping_entry(
     })
 }
 
+/// Status of the gateway's IPv6 firewall.
+#[cfg(feature = "ipv6")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FirewallStatus {
+    /// Whether the firewall is currently enabled on the gateway.
+    pub firewall_enabled: bool,
+    /// Whether inbound pinholes are currently allowed to be created.
+    pub inbound_pinhole_allowed: bool,
+}
+
+#[cfg(feature = "ipv6")]
+fn parse_upnp_bool(xml: &Element, field: &str) -> Option<bool> {
+    match xml.get_child(field)?.get_text()?.as_ref() {
+        "1" | "true" => Some(true),
+        "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "ipv6")]
+pub fn convert_pinhole_error(error: RequestError) -> crate::errors::PinholeError {
+    use crate::errors::PinholeError;
+    match error {
+        RequestError::ErrorCode(606, _) => PinholeError::ActionNotAuthorized,
+        RequestError::ErrorCode(701, _) => PinholeError::PinholeSpaceExhausted,
+        RequestError::ErrorCode(702, _) => PinholeError::FirewallDisabled,
+        RequestError::ErrorCode(703, _) => PinholeError::InboundPinholeNotAllowed,
+        RequestError::ErrorCode(704, _) => PinholeError::NoSuchEntry,
+        e => PinholeError::RequestError(e),
+    }
+}
+
+#[cfg(feature = "ipv6")]
+pub fn parse_add_pinhole_response(result: RequestResult) -> Result<u16, crate::errors::PinholeError> {
+    match result {
+        Ok(resp) => {
+            let id = resp
+                .xml
+                .get_child("UniqueID")
+                .and_then(|e| e.get_text())
+                .and_then(|t| t.parse::<u16>().ok());
+            match id {
+                Some(id) => Ok(id),
+                None => Err(crate::errors::PinholeError::RequestError(
+                    RequestError::InvalidResponse(resp.text),
+                )),
+            }
+        }
+        Err(e) => Err(convert_pinhole_error(e)),
+    }
+}
+
+#[cfg(feature = "ipv6")]
+pub fn parse_pinhole_unit_response(result: RequestResult) -> Result<(), crate::errors::PinholeError> {
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => Err(convert_pinhole_error(e)),
+    }
+}
+
+#[cfg(feature = "ipv6")]
+pub fn parse_firewall_status_response(result: RequestResult) -> Result<FirewallStatus, crate::errors::PinholeError> {
+    let resp = result.map_err(convert_pinhole_error)?;
+    let firewall_enabled = parse_upnp_bool(&resp.xml, "FirewallEnabled");
+    let inbound_pinhole_allowed = parse_upnp_bool(&resp.xml, "InboundPinholeAllowed");
+    match (firewall_enabled, inbound_pinhole_allowed) {
+        (Some(firewall_enabled), Some(inbound_pinhole_allowed)) => Ok(FirewallStatus {
+            firewall_enabled,
+            inbound_pinhole_allowed,
+        }),
+        _ => Err(crate::errors::PinholeError::RequestError(
+            RequestError::InvalidResponse(resp.text),
+        )),
+    }
+}
+
 #[test]
 fn test_parse_search_result_case_insensitivity() {
     assert!(parse_search_result("location:http://0.0.0.0:0/control_url").is_ok());
@@ -411,6 +601,14 @@ fn test_parse_search_result_ok() {
     assert_eq!(result.0.ip(), IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
     assert_eq!(result.0.port(), 0);
     assert_eq!(&result.1[..], "/control_url");
+}
+
+#[test]
+fn test_parse_search_result_ipv6() {
+    let (addr, path) = parse_search_result("location:http://[2001:db8::1]:5000/desc.xml").unwrap();
+    assert_eq!(addr.ip(), IpAddr::V6("2001:db8::1".parse().unwrap()));
+    assert_eq!(addr.port(), 5000);
+    assert_eq!(&path[..], "/desc.xml");
 }
 
 #[test]
@@ -732,4 +930,73 @@ fn test_parse_device_pppconnection() {
     assert_eq!(service_type, "urn:schemas-upnp-org:service:WANPPPConnection:1");
     assert_eq!(control_url, "/ctl/PPPConn");
     assert_eq!(control_schema_url, "/WANPPPCn.xml");
+}
+
+#[cfg(feature = "ipv6")]
+#[test]
+fn test_parse_firewall_control_url() {
+    let text = r#"<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+    <deviceList>
+      <device>
+        <deviceType>urn:schemas-upnp-org:device:WANConnectionDevice:1</deviceType>
+        <serviceList>
+          <service>
+            <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>
+            <controlURL>/ctl/IPConn</controlURL>
+            <SCPDURL>/WANIPCn.xml</SCPDURL>
+          </service>
+          <service>
+            <serviceType>urn:schemas-upnp-org:service:WANIPv6FirewallControl:1</serviceType>
+            <controlURL>/ctl/IPv6FwCtrl</controlURL>
+            <SCPDURL>/IPv6FwCtrl.xml</SCPDURL>
+          </service>
+        </serviceList>
+      </device>
+    </deviceList>
+  </device>
+</root>"#;
+    assert_eq!(
+        parse_firewall_control_url(text.as_bytes()),
+        Some("/ctl/IPv6FwCtrl".to_string())
+    );
+}
+
+#[cfg(feature = "ipv6")]
+#[test]
+fn test_parse_firewall_control_url_absent() {
+    let text = r#"<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>
+        <controlURL>/ctl/IPConn</controlURL>
+      </service>
+    </serviceList>
+  </device>
+</root>"#;
+    assert_eq!(parse_firewall_control_url(text.as_bytes()), None);
+}
+
+#[cfg(feature = "ipv6")]
+#[test]
+fn test_parse_firewall_control_url_empty_is_absent() {
+    // A firewall service that is present but has an empty controlURL must be treated as absent.
+    let text = r#"<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:WANIPv6FirewallControl:1</serviceType>
+        <controlURL></controlURL>
+      </service>
+    </serviceList>
+  </device>
+</root>"#;
+    assert_eq!(parse_firewall_control_url(text.as_bytes()), None);
 }

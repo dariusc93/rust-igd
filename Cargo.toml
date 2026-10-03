@@ -22,7 +22,7 @@ futures = { version = "0.3", optional = true }
 http = { version = "1", optional = true }
 log = "0.4"
 rand = "0.10"
-tokio = { version = "1", optional = true, features = ["net"] }
+tokio = { version = "1", optional = true, features = ["net", "time"] }
 http-body-util = { version = "0.1", optional = true }
 
 thiserror = "2.0.18"
@@ -50,6 +50,8 @@ tokio = { version = "1", features = ["full"] }
 default = ["io_sync"]
 io_sync = ["attohttpc"]
 aio_tokio = ["futures", "tokio", "hyper", "hyper-util", "http-body-util", "bytes", "http"]
+# Opt-in IPv6 firewall pinhole support (WANIPv6FirewallControl, IGD:2). Off by default.
+ipv6 = []
 
 [[example]]
 name = "add_any_port"
@@ -73,4 +75,12 @@ required-features = ["io_sync"]
 
 [[example]]
 name = "remove_port"
+required-features = ["io_sync"]
+
+[[example]]
+name = "add_pinhole"
+required-features = ["io_sync", "ipv6"]
+
+[[example]]
+name = "search_ipv6"
 required-features = ["io_sync"]
