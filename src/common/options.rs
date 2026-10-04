@@ -43,6 +43,9 @@ pub struct SearchOptions {
     pub single_search_timeout: Option<Duration>,
     /// Which IP version(s) of gateway to accept during discovery (defaults to `Both`).
     pub gateway_ip_version: GatewayIpVersion,
+    /// Extra IP addresses trusted for device and service URLs during discovery.
+    /// By default, these URLs must use the SSDP responder's IP address.
+    pub allowed_gateway_ips: Vec<IpAddr>,
 }
 
 impl Default for SearchOptions {
@@ -53,6 +56,7 @@ impl Default for SearchOptions {
             timeout: Some(DEFAULT_TIMEOUT),
             single_search_timeout: Some(RESPONSE_TIMEOUT),
             gateway_ip_version: GatewayIpVersion::Both,
+            allowed_gateway_ips: Vec::new(),
         }
     }
 }

@@ -17,16 +17,16 @@ pub struct Gateway {
     pub addr: SocketAddr,
     /// Root url of the device
     pub root_url: String,
-    /// Control url of the device
+    /// Control path or absolute HTTP URL of the device
     pub control_url: String,
-    /// Url to get schema data from
+    /// Path or absolute HTTP URL for schema data
     pub control_schema_url: String,
     /// Control schema for all actions
     pub control_schema: HashMap<String, Vec<String>>,
     /// Service type of the gateway's WAN connection service (e.g.
     /// `urn:schemas-upnp-org:service:WANIPConnection:1`)
     pub service_type: String,
-    /// Control url of the device's `WANIPv6FirewallControl` service, if it exposes one.
+    /// Control path or absolute HTTP URL for the `WANIPv6FirewallControl` service.
     #[cfg(feature = "ipv6")]
     pub ipv6_firewall_control_url: Option<String>,
 }
@@ -44,22 +44,25 @@ pub struct Ipv6FirewallGateway {
 }
 
 fn send_soap(addr: SocketAddr, control_url: &str, header: &str, body: &str, ok: &str) -> RequestResult {
+    let target = common::endpoint::target(addr, control_url)
+        .map_err(|_| RequestError::InvalidResponse("invalid control URL".into()))?;
     // A link-local gateway can only be reached on a specific interface (the address's zone id),
     // which a URL cannot carry, so connect to the scoped address directly instead of attohttpc.
-    let bytes = if common::linklocal::is_scoped_link_local(&addr) {
+    let bytes = if common::linklocal::is_scoped_link_local(&target.addr) {
         common::linklocal::raw_http_request(
-            addr,
+            target.addr,
             "POST",
-            control_url,
+            &target.path_and_query,
             &[("SOAPAction", header), ("Content-Type", "text/xml")],
             Some(body),
             DEFAULT_REQUEST_TIMEOUT,
             MAX_RESPONSE_BYTES,
         )?
     } else {
-        let url = format!("http://{addr}{control_url}");
-        let response = match RequestBuilder::try_new(Method::POST, url) {
+        let response = match RequestBuilder::try_new(Method::POST, target.transport_url()) {
             Ok(request_builder) => request_builder
+                .follow_redirects(false)
+                .connect_timeout(DEFAULT_REQUEST_TIMEOUT)
                 .timeout(DEFAULT_REQUEST_TIMEOUT)
                 .header("SOAPAction", header)
                 .header("Content-Type", "text/xml")
@@ -424,7 +427,10 @@ impl Ipv6FirewallGateway {
 
 impl fmt::Display for Gateway {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "http://{}{}", self.addr, self.control_url)
+        match common::endpoint::target(self.addr, &self.control_url) {
+            Ok(target) => f.write_str(&target.transport_url()),
+            Err(_) => write!(f, "http://{}{}", self.addr, self.control_url),
+        }
     }
 }
 

@@ -33,13 +33,12 @@ pub fn host_without_zone(addr: &SocketAddr) -> String {
     }
 }
 
-fn is_link_local(addr: &Ipv6Addr) -> bool {
+pub fn is_link_local(addr: &Ipv6Addr) -> bool {
     (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
-/// Perform an HTTP/1.1 request directly over a TCP connection to `addr` (which may carry an IPv6
-/// zone id, for a link-local gateway), returning the response body. Uses `Connection: close` and
-/// reads to EOF, decoding `Transfer-Encoding: chunked` if present. The body is capped at `max_body`.
+/// Send an HTTP request to a scoped gateway and return its response body.
+/// The timeout covers the full request and response.
 #[cfg(feature = "io_sync")]
 pub fn raw_http_request(
     addr: SocketAddr,
@@ -50,13 +49,30 @@ pub fn raw_http_request(
     timeout: std::time::Duration,
     max_body: usize,
 ) -> std::io::Result<Vec<u8>> {
-    use std::io::{Error, ErrorKind, Read, Write};
+    use std::io::{Error, ErrorKind, Write};
     use std::net::TcpStream;
+    use std::time::Instant;
+
+    if !path.starts_with('/')
+        || path.bytes().any(|byte| byte == b'\r' || byte == b'\n')
+        || extra_headers.iter().any(|(name, value)| {
+            name.bytes()
+                .chain(value.bytes())
+                .any(|byte| byte == b'\r' || byte == b'\n')
+        })
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "invalid HTTP request target or header",
+        ));
+    }
+
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "invalid HTTP timeout"))?;
 
     let host = host_without_zone(&addr);
-    let stream = TcpStream::connect_timeout(&addr, timeout)?;
-    stream.set_read_timeout(Some(timeout))?;
-    stream.set_write_timeout(Some(timeout))?;
+    let mut stream = TcpStream::connect_timeout(&addr, remaining(deadline)?)?;
 
     let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
     for (name, value) in extra_headers {
@@ -72,28 +88,114 @@ pub fn raw_http_request(
     if let Some(body) = body {
         request.push_str(body);
     }
-    (&stream).write_all(request.as_bytes())?;
+    let mut written = 0;
+    while written < request.len() {
+        stream.set_write_timeout(Some(remaining(deadline)?))?;
+        let count = stream.write(&request.as_bytes()[written..])?;
+        if count == 0 {
+            return Err(Error::new(ErrorKind::WriteZero, "could not send HTTP request"));
+        }
+        written += count;
+    }
 
-    // `Connection: close` => the server closes after the response, so read to EOF (capped).
     let mut raw = Vec::new();
-    (&stream).take(max_body as u64 + 1).read_to_end(&mut raw)?;
-    if raw.len() > max_body {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "gateway response body exceeded the maximum allowed size",
-        ));
-    }
-
-    let header_end = find_subsequence(&raw, b"\r\n\r\n")
-        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "malformed HTTP response"))?;
+    let header_end = loop {
+        if let Some(end) = find_subsequence(&raw, b"\r\n\r\n") {
+            if end > 16 * 1024 {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "HTTP response headers are too large",
+                ));
+            }
+            break end;
+        }
+        if raw.len() > 16 * 1024 {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "HTTP response headers are too large",
+            ));
+        }
+        if read_more(&mut stream, &mut raw, deadline)? == 0 {
+            return Err(Error::new(ErrorKind::InvalidData, "malformed HTTP response"));
+        }
+    };
     let headers = &raw[..header_end];
-    let body = &raw[header_end + 4..];
+    let framing = response_framing(headers)?;
+    let body_start = header_end + 4;
 
-    if headers_are_chunked(headers) {
-        dechunk(body)
-    } else {
-        Ok(body.to_vec())
+    match framing {
+        ResponseFraming::Length(length) => {
+            if length > max_body {
+                return Err(body_too_large());
+            }
+            while raw.len() - body_start < length {
+                if read_more(&mut stream, &mut raw, deadline)? == 0 {
+                    return Err(Error::new(ErrorKind::UnexpectedEof, "incomplete HTTP response body"));
+                }
+            }
+            Ok(raw[body_start..body_start + length].to_vec())
+        }
+        ResponseFraming::Chunked => {
+            let mut scanner = ChunkScanner::default();
+            loop {
+                if let Some(end) = scanner.advance(&raw[body_start..])? {
+                    if end > max_body {
+                        return Err(body_too_large());
+                    }
+                    return dechunk(&raw[body_start..body_start + end]);
+                }
+                if raw.len() - body_start > max_body {
+                    return Err(body_too_large());
+                }
+                if read_more(&mut stream, &mut raw, deadline)? == 0 {
+                    return Err(Error::new(ErrorKind::UnexpectedEof, "incomplete chunked response"));
+                }
+            }
+        }
+        ResponseFraming::Close => {
+            while raw.len() - body_start <= max_body {
+                if read_more(&mut stream, &mut raw, deadline)? == 0 {
+                    return Ok(raw[body_start..].to_vec());
+                }
+            }
+            Err(body_too_large())
+        }
     }
+}
+
+#[cfg(feature = "io_sync")]
+fn remaining(deadline: std::time::Instant) -> std::io::Result<std::time::Duration> {
+    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    if left.is_zero() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "HTTP request timed out",
+        ))
+    } else {
+        Ok(left)
+    }
+}
+
+#[cfg(feature = "io_sync")]
+fn read_more(
+    stream: &mut std::net::TcpStream,
+    raw: &mut Vec<u8>,
+    deadline: std::time::Instant,
+) -> std::io::Result<usize> {
+    use std::io::Read;
+    stream.set_read_timeout(Some(remaining(deadline)?))?;
+    let mut buffer = [0u8; 8192];
+    let count = stream.read(&mut buffer)?;
+    raw.extend_from_slice(&buffer[..count]);
+    Ok(count)
+}
+
+#[cfg(feature = "io_sync")]
+fn body_too_large() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "gateway response body exceeded the maximum allowed size",
+    )
 }
 
 #[cfg(feature = "io_sync")]
@@ -102,9 +204,125 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[cfg(feature = "io_sync")]
-fn headers_are_chunked(headers: &[u8]) -> bool {
-    let lower: Vec<u8> = headers.iter().map(|b| b.to_ascii_lowercase()).collect();
-    find_subsequence(&lower, b"transfer-encoding:").is_some() && find_subsequence(&lower, b"chunked").is_some()
+enum ResponseFraming {
+    Length(usize),
+    Chunked,
+    Close,
+}
+
+#[cfg(feature = "io_sync")]
+fn response_framing(headers: &[u8]) -> std::io::Result<ResponseFraming> {
+    use std::io::{Error, ErrorKind};
+
+    let mut length = None;
+    let mut chunked = false;
+    for line in headers.split(|byte| *byte == b'\n').skip(1) {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(split) = line.iter().position(|byte| *byte == b':') else {
+            continue;
+        };
+        let name = &line[..split];
+        let value = std::str::from_utf8(&line[split + 1..])
+            .map_err(|_| Error::new(ErrorKind::InvalidData, "invalid HTTP response header"))?
+            .trim();
+        if name.eq_ignore_ascii_case(b"content-length") {
+            if length.is_some() {
+                return Err(Error::new(ErrorKind::InvalidData, "duplicate content length"));
+            }
+            length = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| Error::new(ErrorKind::InvalidData, "invalid content length"))?,
+            );
+        } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
+            if !value.eq_ignore_ascii_case("chunked") || chunked {
+                return Err(Error::new(ErrorKind::InvalidData, "unsupported transfer encoding"));
+            }
+            chunked = true;
+        }
+    }
+    match (chunked, length) {
+        (true, Some(_)) => Err(Error::new(ErrorKind::InvalidData, "ambiguous HTTP response framing")),
+        (true, None) => Ok(ResponseFraming::Chunked),
+        (false, Some(length)) => Ok(ResponseFraming::Length(length)),
+        (false, None) => Ok(ResponseFraming::Close),
+    }
+}
+
+#[cfg(feature = "io_sync")]
+#[derive(Default)]
+struct ChunkScanner {
+    offset: usize,
+    state: ChunkState,
+}
+
+#[cfg(feature = "io_sync")]
+#[derive(Default)]
+enum ChunkState {
+    #[default]
+    Size,
+    Data(usize),
+    DataEnd,
+    Trailer,
+}
+
+#[cfg(feature = "io_sync")]
+impl ChunkScanner {
+    fn advance(&mut self, body: &[u8]) -> std::io::Result<Option<usize>> {
+        use std::io::{Error, ErrorKind};
+
+        let invalid = || Error::new(ErrorKind::InvalidData, "malformed chunked response");
+        loop {
+            match self.state {
+                ChunkState::Size => {
+                    let Some(line_end) = find_subsequence(&body[self.offset..], b"\r\n") else {
+                        return Ok(None);
+                    };
+                    let line =
+                        std::str::from_utf8(&body[self.offset..self.offset + line_end]).map_err(|_| invalid())?;
+                    let size = usize::from_str_radix(line.split(';').next().unwrap_or("").trim(), 16)
+                        .map_err(|_| invalid())?;
+                    self.offset += line_end + 2;
+                    self.state = if size == 0 {
+                        ChunkState::Trailer
+                    } else {
+                        ChunkState::Data(size)
+                    };
+                }
+                ChunkState::Data(left) => {
+                    let count = left.min(body.len() - self.offset);
+                    self.offset += count;
+                    self.state = if count == left {
+                        ChunkState::DataEnd
+                    } else {
+                        ChunkState::Data(left - count)
+                    };
+                    if count < left {
+                        return Ok(None);
+                    }
+                }
+                ChunkState::DataEnd => {
+                    if body.len() - self.offset < 2 {
+                        return Ok(None);
+                    }
+                    if &body[self.offset..self.offset + 2] != b"\r\n" {
+                        return Err(invalid());
+                    }
+                    self.offset += 2;
+                    self.state = ChunkState::Size;
+                }
+                ChunkState::Trailer => {
+                    let Some(line_end) = find_subsequence(&body[self.offset..], b"\r\n") else {
+                        return Ok(None);
+                    };
+                    self.offset += line_end + 2;
+                    if line_end == 0 {
+                        return Ok(Some(self.offset));
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "io_sync")]

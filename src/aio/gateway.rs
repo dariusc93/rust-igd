@@ -18,16 +18,16 @@ pub struct Gateway<P> {
     pub addr: SocketAddr,
     /// Root url of the device
     pub root_url: String,
-    /// Control url of the device
+    /// Control path or absolute HTTP URL of the device
     pub control_url: String,
-    /// Url to get schema data from
+    /// Path or absolute HTTP URL for schema data
     pub control_schema_url: String,
     /// Control schema for all actions
     pub control_schema: HashMap<String, Vec<String>>,
     /// Service type of the gateway's WAN connection service (e.g.
     /// `urn:schemas-upnp-org:service:WANIPConnection:1`)
     pub service_type: String,
-    /// Control url of the device's `WANIPv6FirewallControl` service, if it exposes one.
+    /// Control path or absolute HTTP URL for the `WANIPv6FirewallControl` service.
     #[cfg(feature = "ipv6")]
     pub ipv6_firewall_control_url: Option<String>,
     /// Executor provider
@@ -61,7 +61,9 @@ impl<P> Ipv6FirewallGateway<P> {
 
 impl<P: Provider> Gateway<P> {
     async fn perform_request(&self, action: &str, body: &str, ok: &str) -> Result<RequestReponse, RequestError> {
-        let url = format!("{self}");
+        let url = common::endpoint::target(self.addr, &self.control_url)
+            .map_err(|_| RequestError::InvalidResponse("invalid control URL".into()))?
+            .transport_url();
         let header = messages::soap_action(&self.service_type, action);
         let text = P::send_async(&url, &header, body).await?;
         parsing::parse_response(text, ok)
@@ -381,7 +383,9 @@ impl<P: Provider> Gateway<P> {
 #[cfg(feature = "ipv6")]
 impl<P: Provider> Ipv6FirewallGateway<P> {
     async fn firewall_request(&self, action: &str, body: &str, ok: &str) -> Result<RequestReponse, RequestError> {
-        let url = format!("http://{}{}", self.addr, self.control_url);
+        let url = common::endpoint::target(self.addr, &self.control_url)
+            .map_err(|_| RequestError::InvalidResponse("invalid control URL".into()))?
+            .transport_url();
         let header = messages::soap_action(messages::WAN_IPV6_FIREWALL_CONTROL, action);
         let text = P::send_async(&url, &header, body).await?;
         parsing::parse_response(text, ok)
@@ -458,7 +462,10 @@ impl<P: Provider> Ipv6FirewallGateway<P> {
 
 impl<P> fmt::Display for Gateway<P> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "http://{}{}", self.addr, self.control_url)
+        match common::endpoint::target(self.addr, &self.control_url) {
+            Ok(target) => f.write_str(&target.transport_url()),
+            Err(_) => write!(f, "http://{}{}", self.addr, self.control_url),
+        }
     }
 }
 
