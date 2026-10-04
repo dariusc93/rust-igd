@@ -16,7 +16,7 @@ use super::{Provider, HEADER_NAME, MAX_RESPONSE_SIZE};
 use crate::aio::Ipv6FirewallGateway;
 use crate::common::messages::search_requests;
 use crate::common::options::{DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
-use crate::common::{parsing, SearchOptions};
+use crate::common::{endpoint, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::{aio::Gateway, RequestError};
 use log::debug;
@@ -155,12 +155,17 @@ async fn discover(options: SearchOptions, target: SearchTarget) -> Result<Discov
             }
         };
 
+        if endpoint::validate_location(addr, from, &options.allowed_gateway_ips).is_err() {
+            debug!("skipping gateway {addr} with an untrusted location");
+            continue;
+        }
+
         if !options.gateway_ip_version.accepts(addr.ip()) {
             debug!("skipping gateway {}: not the requested IP version", addr);
             continue;
         }
 
-        let urls = match get_control_urls(&addr, &root_url).await {
+        let urls = match get_control_urls(&addr, &root_url, &options.allowed_gateway_ips).await {
             Ok(v) => v,
             Err(e) => {
                 debug!("error getting control URLs: {}", e);
@@ -245,13 +250,18 @@ fn handle_broadcast_resp(from: &SocketAddr, data: &[u8]) -> Result<(SocketAddr, 
     Ok((addr, root_url))
 }
 
-async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<parsing::DeviceUrls, SearchError> {
-    let resp = if crate::common::linklocal::is_scoped_link_local(addr) {
-        raw_http_request(*addr, "GET", path, &[], None)
+async fn get_control_urls(
+    addr: &SocketAddr,
+    path: &str,
+    allowed: &[std::net::IpAddr],
+) -> Result<parsing::DeviceUrls, SearchError> {
+    let target = endpoint::target(*addr, path)?;
+    let resp = if crate::common::linklocal::is_scoped_link_local(&target.addr) {
+        raw_http_request(target.addr, "GET", &target.path_and_query, &[], None)
             .await
             .map_err(|_| SearchError::InvalidResponse)?
     } else {
-        let uri = match format!("http://{addr}{path}").parse() {
+        let uri = match target.transport_url().parse() {
             Ok(uri) => uri,
             Err(err) => return Err(SearchError::from(err)),
         };
@@ -268,19 +278,22 @@ async fn get_control_urls(addr: &SocketAddr, path: &str) -> Result<parsing::Devi
     };
 
     debug!("handling control response from: {addr}");
-    parsing::parse_device_urls(std::io::Cursor::new(&resp))
+    let mut urls = parsing::parse_device_urls(std::io::Cursor::new(&resp))?;
+    endpoint::resolve_device_urls(&mut urls, *addr, path, allowed)?;
+    Ok(urls)
 }
 
 async fn get_control_schemas(
     addr: &SocketAddr,
     control_schema_url: &str,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let resp = if crate::common::linklocal::is_scoped_link_local(addr) {
-        raw_http_request(*addr, "GET", control_schema_url, &[], None)
+    let target = endpoint::target(*addr, control_schema_url)?;
+    let resp = if crate::common::linklocal::is_scoped_link_local(&target.addr) {
+        raw_http_request(target.addr, "GET", &target.path_and_query, &[], None)
             .await
             .map_err(|_| SearchError::InvalidResponse)?
     } else {
-        let uri = match format!("http://{addr}{control_schema_url}").parse() {
+        let uri = match target.transport_url().parse() {
             Ok(uri) => uri,
             Err(err) => return Err(SearchError::from(err)),
         };

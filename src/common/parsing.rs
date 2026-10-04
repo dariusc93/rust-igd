@@ -1,15 +1,47 @@
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Read};
 use std::net::{IpAddr, SocketAddr};
 
 use url::{Host, Url};
+use xml::reader::{EventReader, XmlEvent};
 use xmltree::{self, Element};
 
+use crate::common::endpoint;
+use crate::common::options::MAX_RESPONSE_BYTES;
 use crate::errors::{
     AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError, RemovePortError, RequestError,
     SearchError,
 };
 use crate::PortMappingProtocol;
+
+const MAX_XML_DEPTH: usize = 64;
+
+fn parse_limited_xml<R: io::Read>(resp: R) -> Result<Element, SearchError> {
+    let mut body = Vec::new();
+    resp.take(MAX_RESPONSE_BYTES as u64 + 1).read_to_end(&mut body)?;
+    if body.len() > MAX_RESPONSE_BYTES || !xml_depth_ok(&body) {
+        return Err(SearchError::InvalidResponse);
+    }
+    Ok(Element::parse(body.as_slice())?)
+}
+
+fn xml_depth_ok(body: &[u8]) -> bool {
+    let mut depth = 0;
+    for event in EventReader::new(body) {
+        match event {
+            Ok(XmlEvent::StartElement { .. }) => {
+                depth += 1;
+                if depth > MAX_XML_DEPTH {
+                    return false;
+                }
+            }
+            Ok(XmlEvent::EndElement { .. }) => depth = depth.saturating_sub(1),
+            Err(_) => return false,
+            _ => {}
+        }
+    }
+    true
+}
 
 // Parse the result.
 pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchError> {
@@ -21,6 +53,13 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
             if let Some(colon) = line.find(':') {
                 let url_text = &line[colon + 1..].trim();
                 let url = Url::parse(url_text).map_err(|_| InvalidResponse)?;
+                if url.scheme() != "http"
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.fragment().is_some()
+                {
+                    return Err(InvalidResponse);
+                }
                 // Note that we use the typed host rather than `host_str()`, which returns the bracketed
                 // form (eg `[2001:db8::1]`) for IPv6 that `IpAddr` cannot parse, so an IPv6 gateway
                 // LOCATION is handled correctly.
@@ -31,7 +70,7 @@ pub fn parse_search_result(text: &str) -> Result<(SocketAddr, String), SearchErr
                 };
                 let port: u16 = url.port_or_known_default().ok_or(InvalidResponse)?;
 
-                return Ok((SocketAddr::new(addr, port), url.path().to_string()));
+                return Ok((SocketAddr::new(addr, port), endpoint::path_and_query(&url)));
             }
         }
     }
@@ -52,6 +91,8 @@ where
 
 /// Service URLs extracted from a device description document during discovery.
 pub struct DeviceUrls {
+    /// Base URL from the device description, when present.
+    pub url_base: Option<String>,
     /// The WAN connection service, if the device exposes one.
     pub wan: Option<WanConnectionUrls>,
     /// Control URL of the IPv6 firewall service, if the device exposes one.
@@ -74,7 +115,11 @@ pub fn parse_device_urls<R>(resp: R) -> Result<DeviceUrls, SearchError>
 where
     R: io::Read,
 {
-    let root = Element::parse(resp)?;
+    let root = parse_limited_xml(resp)?;
+    let url_base = root
+        .get_child("URLBase")
+        .and_then(|child| child.get_text())
+        .map(|text| text.into_owned());
 
     let wan = root.children.iter().find_map(|child| {
         let child = child.as_element()?;
@@ -105,6 +150,7 @@ where
     }
 
     Ok(DeviceUrls {
+        url_base,
         wan: wan.map(|(service_type, control_schema_url, control_url)| WanConnectionUrls {
             service_type,
             control_schema_url,
@@ -121,7 +167,7 @@ pub fn parse_firewall_control_url<R>(resp: R) -> Option<String>
 where
     R: io::Read,
 {
-    let root = Element::parse(resp).ok()?;
+    let root = parse_limited_xml(resp).ok()?;
     root.children.iter().find_map(|child| {
         let device = child.as_element()?;
         if device.name == "device" {
@@ -134,72 +180,58 @@ where
 
 #[cfg(feature = "ipv6")]
 fn find_firewall_control_url(device: &Element) -> Option<String> {
-    let from_services = device.get_child("serviceList").and_then(|service_list| {
-        service_list.children.iter().find_map(|child| {
-            let service = child.as_element()?;
-            if service.name != "service" {
-                return None;
-            }
-            let service_type = service.get_child("serviceType")?.get_text()?;
-            if service_type.as_ref() == "urn:schemas-upnp-org:service:WANIPv6FirewallControl:1" {
-                // Treat a missing or empty controlURL as "no usable firewall service" so callers
-                // get FirewallControlUnavailable rather than a request POSTed to the device root.
-                service
-                    .get_child("controlURL")
-                    .and_then(|c| c.get_text())
-                    .map(|s| s.into_owned())
-                    .filter(|s| !s.is_empty())
-            } else {
-                None
-            }
-        })
-    });
-    from_services.or_else(|| {
-        device.get_child("deviceList").and_then(|device_list| {
-            device_list.children.iter().find_map(|child| {
-                let device = child.as_element()?;
-                if device.name == "device" {
-                    find_firewall_control_url(device)
-                } else {
-                    None
+    let mut pending = vec![device];
+    while let Some(device) = pending.pop() {
+        if let Some(service_list) = device.get_child("serviceList") {
+            for service in service_list.children.iter().filter_map(|child| child.as_element()) {
+                if service.name == "service"
+                    && service
+                        .get_child("serviceType")
+                        .and_then(|child| child.get_text())
+                        .as_deref()
+                        == Some("urn:schemas-upnp-org:service:WANIPv6FirewallControl:1")
+                {
+                    if let Some(url) = service
+                        .get_child("controlURL")
+                        .and_then(|child| child.get_text())
+                        .filter(|url| !url.is_empty())
+                    {
+                        return Some(url.into_owned());
+                    }
                 }
-            })
-        })
-    })
+            }
+        }
+        push_child_devices(device, &mut pending);
+    }
+    None
 }
 
 fn parse_device(device: &Element) -> Option<(String, String, String)> {
-    let services = device.get_child("serviceList").and_then(|service_list| {
-        service_list
-            .children
-            .iter()
-            .filter_map(|child| {
-                let child = child.as_element()?;
-                if child.name == "service" {
-                    parse_service(child)
-                } else {
-                    None
-                }
-            })
-            .next()
-    });
-    let devices = device.get_child("deviceList").and_then(parse_device_list);
-    services.or(devices)
+    let mut pending = vec![device];
+    while let Some(device) = pending.pop() {
+        if let Some(service_list) = device.get_child("serviceList") {
+            if let Some(service) = service_list
+                .children
+                .iter()
+                .filter_map(|child| child.as_element())
+                .filter(|child| child.name == "service")
+                .find_map(parse_service)
+            {
+                return Some(service);
+            }
+        }
+        push_child_devices(device, &mut pending);
+    }
+    None
 }
 
-fn parse_device_list(device_list: &Element) -> Option<(String, String, String)> {
-    device_list
-        .children
-        .iter()
-        .filter_map(|child| {
+fn push_child_devices<'a>(device: &'a Element, pending: &mut Vec<&'a Element>) {
+    if let Some(device_list) = device.get_child("deviceList") {
+        pending.extend(device_list.children.iter().rev().filter_map(|child| {
             let child = child.as_element()?;
-            if child.name == "device" {
-                parse_device(child)
-            } else {
-                None
-            }
-        })
-        .next()
+            (child.name == "device").then_some(child)
+        }));
+    }
 }
 
 fn parse_service(service: &Element) -> Option<(String, String, String)> {
@@ -238,7 +270,7 @@ pub fn parse_schemas<R>(resp: R) -> Result<HashMap<String, Vec<String>>, SearchE
 where
     R: io::Read,
 {
-    let root = Element::parse(resp)?;
+    let root = parse_limited_xml(resp)?;
 
     let mut schema = root.children.iter().filter_map(|child| {
         let child = child.as_element()?;
@@ -309,6 +341,9 @@ pub struct RequestReponse {
 pub type RequestResult = Result<RequestReponse, RequestError>;
 
 pub fn parse_response(text: String, ok: &str) -> RequestResult {
+    if text.len() > MAX_RESPONSE_BYTES || !xml_depth_ok(text.as_bytes()) {
+        return Err(RequestError::InvalidResponse(text));
+    }
     let mut xml = match xmltree::Element::parse(text.as_bytes()) {
         Ok(xml) => xml,
         Err(..) => return Err(RequestError::InvalidResponse(text)),

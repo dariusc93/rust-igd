@@ -8,7 +8,7 @@ use log::debug;
 
 use crate::common::messages::search_requests;
 use crate::common::options::{DEFAULT_TIMEOUT, MAX_RESPONSE_BYTES, RESPONSE_TIMEOUT};
-use crate::common::{self, parsing, SearchOptions};
+use crate::common::{self, endpoint, parsing, SearchOptions};
 use crate::errors::SearchError;
 use crate::gateway::Gateway;
 #[cfg(feature = "ipv6")]
@@ -137,12 +137,22 @@ fn discover(options: SearchOptions, target: SearchTarget) -> Result<DiscoveredDe
         // gateway can be reached on the interface it answered on.
         let addr = common::linklocal::apply_response_scope(addr, from);
 
+        if endpoint::validate_location(addr, from, &options.allowed_gateway_ips).is_err() {
+            debug!("skipping gateway {addr} with an untrusted location");
+            continue;
+        }
+
         if !options.gateway_ip_version.accepts(addr.ip()) {
             debug!("skipping gateway {addr}. Not the requested IP version");
             continue;
         }
 
-        let urls = match get_control_urls(&addr, &root_url, max_time.saturating_sub(start.elapsed())) {
+        let urls = match get_control_urls(
+            &addr,
+            &root_url,
+            &options.allowed_gateway_ips,
+            max_time.saturating_sub(start.elapsed()),
+        ) {
             Ok(o) => o,
             Err(e) => {
                 debug!(
@@ -189,18 +199,37 @@ fn discover(options: SearchOptions, target: SearchTarget) -> Result<DiscoveredDe
     Err(SearchError::NoResponseWithinTimeout)
 }
 
-fn get_control_urls(addr: &SocketAddr, root_url: &str, timeout: Duration) -> Result<parsing::DeviceUrls, SearchError> {
-    let body = if common::linklocal::is_scoped_link_local(addr) {
-        common::linklocal::raw_http_request(*addr, "GET", root_url, &[], None, timeout, MAX_RESPONSE_BYTES)?
+fn get_control_urls(
+    addr: &SocketAddr,
+    root_url: &str,
+    allowed: &[std::net::IpAddr],
+    timeout: Duration,
+) -> Result<parsing::DeviceUrls, SearchError> {
+    let target = endpoint::target(*addr, root_url)?;
+    let body = if common::linklocal::is_scoped_link_local(&target.addr) {
+        common::linklocal::raw_http_request(
+            target.addr,
+            "GET",
+            &target.path_and_query,
+            &[],
+            None,
+            timeout,
+            MAX_RESPONSE_BYTES,
+        )?
     } else {
-        let url = format!("http://{addr}{root_url}");
-        let response = match RequestBuilder::try_new(Method::GET, url) {
-            Ok(request_builder) => request_builder.timeout(timeout).send()?,
+        let response = match RequestBuilder::try_new(Method::GET, target.transport_url()) {
+            Ok(request_builder) => request_builder
+                .follow_redirects(false)
+                .connect_timeout(timeout)
+                .timeout(timeout)
+                .send()?,
             Err(error) => return Err(SearchError::HttpError(error)),
         };
         common::read_response_body(response, MAX_RESPONSE_BYTES)?
     };
-    parsing::parse_device_urls(&body[..])
+    let mut urls = parsing::parse_device_urls(&body[..])?;
+    endpoint::resolve_device_urls(&mut urls, *addr, root_url, allowed)?;
+    Ok(urls)
 }
 
 fn get_schemas(
@@ -208,12 +237,24 @@ fn get_schemas(
     control_schema_url: &str,
     timeout: Duration,
 ) -> Result<HashMap<String, Vec<String>>, SearchError> {
-    let body = if common::linklocal::is_scoped_link_local(addr) {
-        common::linklocal::raw_http_request(*addr, "GET", control_schema_url, &[], None, timeout, MAX_RESPONSE_BYTES)?
+    let target = endpoint::target(*addr, control_schema_url)?;
+    let body = if common::linklocal::is_scoped_link_local(&target.addr) {
+        common::linklocal::raw_http_request(
+            target.addr,
+            "GET",
+            &target.path_and_query,
+            &[],
+            None,
+            timeout,
+            MAX_RESPONSE_BYTES,
+        )?
     } else {
-        let url = format!("http://{addr}{control_schema_url}");
-        let response = match RequestBuilder::try_new(Method::GET, url) {
-            Ok(request_builder) => request_builder.timeout(timeout).send()?,
+        let response = match RequestBuilder::try_new(Method::GET, target.transport_url()) {
+            Ok(request_builder) => request_builder
+                .follow_redirects(false)
+                .connect_timeout(timeout)
+                .timeout(timeout)
+                .send()?,
             Err(error) => return Err(SearchError::HttpError(error)),
         };
         common::read_response_body(response, MAX_RESPONSE_BYTES)?

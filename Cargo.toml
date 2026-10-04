@@ -29,6 +29,7 @@ thiserror = "2.0.18"
 
 url = "2"
 xmltree = "0.10"
+xml-rs = "0.8"
 
 [dependencies.hyper]
 default-features = false
