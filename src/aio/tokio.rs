@@ -1,12 +1,12 @@
 //! Tokio abstraction for the aio [`Gateway`].
 
 use bytes::Bytes;
-use futures::prelude::*;
 use http_body_util::{BodyExt, Empty, Full, Limited};
 use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use hyper::Request;
 use hyper_util::client::legacy::Client;
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 
 use tokio::{net::UdpSocket, time::timeout};
@@ -230,7 +230,7 @@ async fn send_search_request(socket: &mut UdpSocket, addr: SocketAddr) -> Result
 
 async fn receive_search_response(socket: &mut UdpSocket) -> Result<(Vec<u8>, SocketAddr), SearchError> {
     let mut buff = [0u8; MAX_RESPONSE_SIZE];
-    let (n, from) = socket.recv_from(&mut buff).map_err(SearchError::from).await?;
+    let (n, from) = socket.recv_from(&mut buff).await.map_err(SearchError::from)?;
     debug!("received broadcast response from: {}", from);
     Ok((buff[..n].to_vec(), from))
 }
@@ -358,7 +358,7 @@ async fn raw_http_request(
     let mut conn = std::pin::pin!(conn);
     let mut conn_done = false;
 
-    futures::future::poll_fn(move |cx| {
+    std::future::poll_fn(move |cx| {
         if !conn_done {
             match conn.as_mut().poll(cx) {
                 Poll::Ready(Err(e)) => return Poll::Ready(Err(RequestError::HyperError(e))),
