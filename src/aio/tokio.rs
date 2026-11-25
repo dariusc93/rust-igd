@@ -89,6 +89,7 @@ pub async fn search_gateway(options: SearchOptions) -> Result<Gateway<Tokio>, Se
         control_schema_url: wan.control_schema_url,
         control_schema,
         service_type: wan.service_type,
+        root_udn: discovered.urls.root_udn,
         #[cfg(feature = "ipv6")]
         ipv6_firewall_control_url: discovered.urls.ipv6_firewall_control_url,
         provider: Tokio,

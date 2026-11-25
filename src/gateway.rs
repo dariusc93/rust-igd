@@ -26,6 +26,10 @@ pub struct Gateway {
     /// Service type of the gateway's WAN connection service (e.g.
     /// `urn:schemas-upnp-org:service:WANIPConnection:1`)
     pub service_type: String,
+    /// `UDN` of the root device that contains the WAN connection service (e.g. `uuid:...`), to tell whether
+    /// gateways found at different addresses (such as IPv4 and IPv6) are the same device. `None` if the
+    /// description has no single direct `UDN` on that device. The description is not authenticated.
+    pub root_udn: Option<String>,
     /// Control path or absolute HTTP URL for the `WANIPv6FirewallControl` service.
     #[cfg(feature = "ipv6")]
     pub ipv6_firewall_control_url: Option<String>,
@@ -293,6 +297,36 @@ impl Gateway {
         ))
     }
 
+    /// Get the port mapping entry for `(protocol, external_port)` with the wildcard remote host.
+    ///
+    /// Returns `GetSpecificPortMappingEntryError::NoSuchPortMapping` if no such mapping exists.
+    pub fn get_specific_port_mapping_entry(
+        &self,
+        protocol: PortMappingProtocol,
+        external_port: u16,
+    ) -> Result<parsing::PortMappingEntry, errors::GetSpecificPortMappingEntryError> {
+        let schema = self
+            .control_schema
+            .get(messages::GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION)
+            .ok_or_else(|| {
+                RequestError::UnsupportedAction(messages::GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION.to_string())
+            })?;
+        parsing::parse_get_specific_port_mapping_entry(
+            self.perform_request(
+                messages::GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION,
+                &messages::format_get_specific_port_mapping_entry_message(
+                    &self.service_type,
+                    schema,
+                    protocol,
+                    external_port,
+                ),
+                "GetSpecificPortMappingEntryResponse",
+            ),
+            protocol,
+            external_port,
+        )
+    }
+
     #[cfg(feature = "ipv6")]
     /// Get a handle to this gateway's IPv6 firewall service, if it exposes one.
     pub fn ipv6_firewall(&self) -> Option<Ipv6FirewallGateway> {
@@ -462,6 +496,7 @@ mod ipv6_tests {
             control_schema_url: String::new(),
             control_schema: HashMap::new(),
             service_type: String::new(),
+            root_udn: None,
             ipv6_firewall_control_url: firewall,
         }
     }
@@ -490,5 +525,93 @@ mod ipv6_tests {
             gw.add_pinhole(PortMappingProtocol::TCP, client, 3600),
             Err(errors::PinholeError::FirewallControlUnavailable)
         ));
+    }
+}
+
+#[cfg(test)]
+mod specific_entry_tests {
+    use super::*;
+    use crate::common::test_support::{serve_once, ENTRY_RESPONSE, LOOPBACKS, NO_SUCH_ENTRY_FAULT, SERVICE};
+    use crate::errors::GetSpecificPortMappingEntryError;
+
+    fn gateway(addr: SocketAddr, actions: &[(&str, &[&str])]) -> Gateway {
+        Gateway {
+            addr,
+            root_url: "/rootDesc.xml".into(),
+            control_url: "/ctl/IPConn".into(),
+            control_schema_url: "/scpd.xml".into(),
+            control_schema: actions
+                .iter()
+                .map(|(name, args)| (name.to_string(), args.iter().map(|a| a.to_string()).collect()))
+                .collect(),
+            service_type: SERVICE.into(),
+            root_udn: None,
+            #[cfg(feature = "ipv6")]
+            ipv6_firewall_control_url: None,
+        }
+    }
+
+    const ACTION: (&str, &[&str]) = (
+        "GetSpecificPortMappingEntry",
+        &["NewRemoteHost", "NewExternalPort", "NewProtocol"],
+    );
+
+    #[test]
+    fn reads_back_an_entry_over_each_loopback_family() {
+        for bind in LOOPBACKS {
+            let Some((addr, server)) = serve_once(bind, "200 OK", ENTRY_RESPONSE) else {
+                continue;
+            };
+            let entry = gateway(addr, &[ACTION])
+                .get_specific_port_mapping_entry(PortMappingProtocol::TCP, 4000)
+                .unwrap();
+            assert_eq!(
+                (entry.remote_host.as_str(), entry.external_port, entry.protocol),
+                ("", 4000, PortMappingProtocol::TCP)
+            );
+            assert_eq!(
+                (entry.internal_port, entry.internal_client.as_str()),
+                (4000, "192.0.2.10")
+            );
+            assert_eq!((entry.enabled, entry.lease_duration), (true, 3600));
+            let request = server.join().unwrap();
+            assert!(request.starts_with("POST /ctl/IPConn HTTP/1.1\r\n"), "{request}");
+            assert!(request
+                .to_ascii_lowercase()
+                .contains(&format!("soapaction: \"{SERVICE}#GetSpecificPortMappingEntry\"").to_ascii_lowercase()));
+            assert!(request.contains("<NewExternalPort>4000</NewExternalPort>"));
+            assert!(request.contains("<NewProtocol>TCP</NewProtocol>"));
+            assert!(request.contains("<NewRemoteHost></NewRemoteHost>"));
+        }
+    }
+
+    #[test]
+    fn missing_entry_is_no_such_port_mapping() {
+        let (addr, server) = serve_once("127.0.0.1:0", "500 Internal Server Error", NO_SUCH_ENTRY_FAULT).unwrap();
+        let err = gateway(addr, &[ACTION])
+            .get_specific_port_mapping_entry(PortMappingProtocol::UDP, 4000)
+            .err()
+            .unwrap();
+        assert!(
+            matches!(err, GetSpecificPortMappingEntryError::NoSuchPortMapping),
+            "{err:?}"
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn action_missing_from_the_scpd_is_unsupported_without_a_request() {
+        // The port is unused: the call must fail before any connection is attempted.
+        let err = gateway("127.0.0.1:9".parse().unwrap(), &[])
+            .get_specific_port_mapping_entry(PortMappingProtocol::TCP, 4000)
+            .err()
+            .unwrap();
+        assert!(
+            matches!(
+                err,
+                GetSpecificPortMappingEntryError::RequestError(RequestError::UnsupportedAction(_))
+            ),
+            "{err:?}"
+        );
     }
 }

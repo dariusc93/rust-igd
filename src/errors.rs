@@ -217,6 +217,30 @@ impl From<RequestError> for GetGenericPortMappingEntryError {
     }
 }
 
+/// Errors returned by `Gateway::get_specific_port_mapping_entry`
+#[derive(thiserror::Error, Debug)]
+pub enum GetSpecificPortMappingEntryError {
+    /// The client is not authorized to perform the operation.
+    #[error("The client is not authorized to look up port mappings.")]
+    ActionNotAuthorized,
+    /// No mapping exists for this protocol and external port.
+    #[error("No port mapping exists for this protocol and external port")]
+    NoSuchPortMapping,
+    /// Some other error occured performing the request.
+    #[error("{0}")]
+    RequestError(#[source] RequestError),
+}
+
+impl From<RequestError> for GetSpecificPortMappingEntryError {
+    fn from(err: RequestError) -> GetSpecificPortMappingEntryError {
+        match err {
+            RequestError::ErrorCode(606, _) => GetSpecificPortMappingEntryError::ActionNotAuthorized,
+            RequestError::ErrorCode(714, _) => GetSpecificPortMappingEntryError::NoSuchPortMapping,
+            other => GetSpecificPortMappingEntryError::RequestError(other),
+        }
+    }
+}
+
 /// An error type that emcompasses all possible errors.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -232,6 +256,9 @@ pub enum Error {
     /// `GetGenericPortMappingEntryError`
     #[error("{0}")]
     GetGenericPortMappingEntryError(#[from] GetGenericPortMappingEntryError),
+    /// `GetSpecificPortMappingEntryError`
+    #[error("{0}")]
+    GetSpecificPortMappingEntryError(#[from] GetSpecificPortMappingEntryError),
     /// `RemovePortError`
     #[error("{0}")]
     RemovePortError(#[from] RemovePortError),

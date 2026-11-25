@@ -33,6 +33,7 @@ pub const ADD_PORT_MAPPING_ACTION: &str = "AddPortMapping";
 pub const DELETE_PORT_MAPPING_ACTION: &str = "DeletePortMapping";
 
 pub const GET_GENERIC_PORT_MAPPING_ENTRY_ACTION: &str = "GetGenericPortMappingEntry";
+pub const GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION: &str = "GetSpecificPortMappingEntry";
 
 /// Build the quoted `SOAPAction` header value (`"<service_type>#<action>"`) for a request.
 pub fn soap_action(service_type: &str, action: &str) -> String {
@@ -156,6 +157,38 @@ pub fn format_delete_port_message(
     protocol: PortMappingProtocol,
     external_port: u16,
 ) -> String {
+    format_port_key_message(
+        DELETE_PORT_MAPPING_ACTION,
+        service_type,
+        schema,
+        protocol,
+        external_port,
+    )
+}
+
+/// `GetSpecificPortMappingEntry` takes the same (remote host, external port, protocol) key as `DeletePortMapping`.
+pub fn format_get_specific_port_mapping_entry_message(
+    service_type: &str,
+    schema: &[String],
+    protocol: PortMappingProtocol,
+    external_port: u16,
+) -> String {
+    format_port_key_message(
+        GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION,
+        service_type,
+        schema,
+        protocol,
+        external_port,
+    )
+}
+
+fn format_port_key_message(
+    action: &str,
+    service_type: &str,
+    schema: &[String],
+    protocol: PortMappingProtocol,
+    external_port: u16,
+) -> String {
     let args = schema
         .iter()
         .filter_map(|argument| {
@@ -174,9 +207,9 @@ pub fn format_delete_port_message(
         .join("\n");
 
     format_message(format!(
-        r#"<u:DeletePortMapping xmlns:u="{service_type}">
+        r#"<u:{action} xmlns:u="{service_type}">
         {args}
-        </u:DeletePortMapping>"#
+        </u:{action}>"#
     ))
 }
 
@@ -384,5 +417,22 @@ mod tests {
         let delete = format_delete_pinhole_message(42);
         assert!(delete.contains("<u:DeletePinhole"));
         assert!(delete.contains("<UniqueID>42</UniqueID>"));
+    }
+
+    #[test]
+    fn specific_entry_message_uses_the_scpd_arguments_and_wildcard_remote_host() {
+        let schema = ["NewRemoteHost", "NewExternalPort", "NewProtocol"].map(String::from);
+        let message = format_get_specific_port_mapping_entry_message(
+            "urn:schemas-upnp-org:service:WANIPConnection:2",
+            &schema,
+            PortMappingProtocol::UDP,
+            4000,
+        );
+        assert!(message
+            .contains(r#"<u:GetSpecificPortMappingEntry xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:2">"#));
+        assert!(message.contains("<NewRemoteHost></NewRemoteHost>"));
+        assert!(message.contains("<NewExternalPort>4000</NewExternalPort>"));
+        assert!(message.contains("<NewProtocol>UDP</NewProtocol>"));
+        assert!(message.contains("</u:GetSpecificPortMappingEntry>"));
     }
 }
