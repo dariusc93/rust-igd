@@ -27,6 +27,10 @@ pub struct Gateway<P> {
     /// Service type of the gateway's WAN connection service (e.g.
     /// `urn:schemas-upnp-org:service:WANIPConnection:1`)
     pub service_type: String,
+    /// `UDN` of the root device that contains the WAN connection service (e.g. `uuid:...`), to tell whether
+    /// gateways found at different addresses (such as IPv4 and IPv6) are the same device. `None` if the
+    /// description has no single direct `UDN` on that device. The description is not authenticated.
+    pub root_udn: Option<String>,
     /// Control path or absolute HTTP URL for the `WANIPv6FirewallControl` service.
     #[cfg(feature = "ipv6")]
     pub ipv6_firewall_control_url: Option<String>,
@@ -314,6 +318,35 @@ impl<P: Provider> Gateway<P> {
         parsing::parse_get_generic_port_mapping_entry(result)
     }
 
+    /// Get the port mapping entry for `(protocol, external_port)` with the wildcard remote host.
+    ///
+    /// Returns `GetSpecificPortMappingEntryError::NoSuchPortMapping` if no such mapping exists.
+    pub async fn get_specific_port_mapping_entry(
+        &self,
+        protocol: PortMappingProtocol,
+        external_port: u16,
+    ) -> Result<parsing::PortMappingEntry, errors::GetSpecificPortMappingEntryError> {
+        let schema = self
+            .control_schema
+            .get(messages::GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION)
+            .ok_or_else(|| {
+                RequestError::UnsupportedAction(messages::GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION.to_string())
+            })?;
+        let result = self
+            .perform_request(
+                messages::GET_SPECIFIC_PORT_MAPPING_ENTRY_ACTION,
+                &messages::format_get_specific_port_mapping_entry_message(
+                    &self.service_type,
+                    schema,
+                    protocol,
+                    external_port,
+                ),
+                "GetSpecificPortMappingEntryResponse",
+            )
+            .await;
+        parsing::parse_get_specific_port_mapping_entry(result, protocol, external_port)
+    }
+
     #[cfg(feature = "ipv6")]
     /// Get a handle to this gateway's IPv6 firewall service, if it exposes one.
     pub fn ipv6_firewall(&self) -> Option<Ipv6FirewallGateway<P>> {
@@ -481,5 +514,82 @@ impl<P> Hash for Gateway<P> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.addr.hash(state);
         self.control_url.hash(state);
+    }
+}
+
+#[cfg(test)]
+mod specific_entry_tests {
+    use super::*;
+    use crate::aio::tokio::Tokio;
+    use crate::common::test_support::{serve_once, ENTRY_RESPONSE, LOOPBACKS, NO_SUCH_ENTRY_FAULT, SERVICE};
+    use crate::errors::GetSpecificPortMappingEntryError;
+
+    fn gateway(addr: SocketAddr, with_action: bool) -> Gateway<Tokio> {
+        let args = ["NewRemoteHost", "NewExternalPort", "NewProtocol"]
+            .map(String::from)
+            .to_vec();
+        Gateway {
+            addr,
+            root_url: "/rootDesc.xml".into(),
+            control_url: "/ctl/IPConn".into(),
+            control_schema_url: "/scpd.xml".into(),
+            control_schema: with_action
+                .then(|| ("GetSpecificPortMappingEntry".to_string(), args))
+                .into_iter()
+                .collect(),
+            service_type: SERVICE.into(),
+            root_udn: None,
+            #[cfg(feature = "ipv6")]
+            ipv6_firewall_control_url: None,
+            provider: Tokio,
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_back_an_entry_over_each_loopback_family() {
+        for bind in LOOPBACKS {
+            let Some((addr, server)) = serve_once(bind, "200 OK", ENTRY_RESPONSE) else {
+                continue;
+            };
+            let entry = gateway(addr, true)
+                .get_specific_port_mapping_entry(PortMappingProtocol::TCP, 4000)
+                .await
+                .unwrap();
+            assert_eq!(
+                (entry.external_port, entry.internal_port, entry.enabled),
+                (4000, 4000, true)
+            );
+            assert_eq!(entry.internal_client, "192.0.2.10");
+            let request = server.join().unwrap();
+            assert!(request.contains("<NewExternalPort>4000</NewExternalPort>"), "{request}");
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_entry_and_missing_action_are_distinct_errors() {
+        let (addr, server) = serve_once("127.0.0.1:0", "500 Internal Server Error", NO_SUCH_ENTRY_FAULT).unwrap();
+        let err = gateway(addr, true)
+            .get_specific_port_mapping_entry(PortMappingProtocol::UDP, 4000)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(err, GetSpecificPortMappingEntryError::NoSuchPortMapping),
+            "{err:?}"
+        );
+        server.join().unwrap();
+
+        let err = gateway("127.0.0.1:9".parse().unwrap(), false)
+            .get_specific_port_mapping_entry(PortMappingProtocol::TCP, 4000)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(
+                err,
+                GetSpecificPortMappingEntryError::RequestError(RequestError::UnsupportedAction(_))
+            ),
+            "{err:?}"
+        );
     }
 }

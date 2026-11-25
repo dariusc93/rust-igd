@@ -3,6 +3,8 @@ pub mod linklocal;
 pub mod messages;
 pub mod options;
 pub mod parsing;
+#[cfg(test)]
+pub mod test_support;
 
 pub use self::options::SearchOptions;
 

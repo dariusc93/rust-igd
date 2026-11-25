@@ -9,8 +9,8 @@ use xmltree::{self, Element};
 use crate::common::endpoint;
 use crate::common::options::MAX_RESPONSE_BYTES;
 use crate::errors::{
-    AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError, RemovePortError, RequestError,
-    SearchError,
+    AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError,
+    GetSpecificPortMappingEntryError, RemovePortError, RequestError, SearchError,
 };
 use crate::PortMappingProtocol;
 
@@ -95,6 +95,8 @@ pub struct DeviceUrls {
     pub url_base: Option<String>,
     /// The WAN connection service, if the device exposes one.
     pub wan: Option<WanConnectionUrls>,
+    /// `UDN` of the root device that contains `wan`; `None` if it has no or several direct `UDN` children.
+    pub root_udn: Option<String>,
     /// Control URL of the IPv6 firewall service, if the device exposes one.
     #[cfg(feature = "ipv6")]
     pub ipv6_firewall_control_url: Option<String>,
@@ -121,10 +123,13 @@ where
         .and_then(|child| child.get_text())
         .map(|text| text.into_owned());
 
+    let mut root_udn = None;
     let wan = root.children.iter().find_map(|child| {
         let child = child.as_element()?;
         if child.name == "device" {
-            parse_device(child)
+            let wan = parse_device(child)?;
+            root_udn = direct_udn(child);
+            Some(wan)
         } else {
             None
         }
@@ -156,9 +161,24 @@ where
             control_schema_url,
             control_url,
         }),
+        root_udn,
         #[cfg(feature = "ipv6")]
         ipv6_firewall_control_url,
     })
+}
+
+/// The trimmed, non-empty text of the one direct `UDN` child of `device`; nested devices' UDNs never count.
+fn direct_udn(device: &Element) -> Option<String> {
+    let mut udns = device
+        .children
+        .iter()
+        .filter_map(|child| child.as_element())
+        .filter(|child| child.name == "UDN");
+    let udn = udns.next()?;
+    if udns.next().is_some() {
+        return None;
+    }
+    scalar_text(udn).filter(|udn| !udn.is_empty())
 }
 
 /// Find the control URL of the `WANIPv6FirewallControl:1` service in a device description.
@@ -336,9 +356,33 @@ fn parse_argument(action: &Element) -> Option<String> {
 pub struct RequestReponse {
     text: String,
     xml: xmltree::Element,
+    /// More than one `Body`, more than one matching response element, or a `Fault` next to one. Existing actions keep
+    /// using the first match; strict parsers reject it.
+    ambiguous: bool,
 }
 
 pub type RequestResult = Result<RequestReponse, RequestError>;
+
+fn count_children(element: &Element, name: &str) -> usize {
+    element
+        .children
+        .iter()
+        .filter_map(|child| child.as_element())
+        .filter(|child| child.name == name)
+        .count()
+}
+
+/// Text of an element that holds only text (or CDATA), trimmed; `None` if it has any child element or other node.
+fn scalar_text(element: &Element) -> Option<String> {
+    let mut text = String::new();
+    for node in &element.children {
+        match node {
+            xmltree::XMLNode::Text(t) | xmltree::XMLNode::CData(t) => text.push_str(t),
+            _ => return None,
+        }
+    }
+    Some(text.trim().to_owned())
+}
 
 pub fn parse_response(text: String, ok: &str) -> RequestResult {
     if text.len() > MAX_RESPONSE_BYTES || !xml_depth_ok(text.as_bytes()) {
@@ -348,12 +392,18 @@ pub fn parse_response(text: String, ok: &str) -> RequestResult {
         Ok(xml) => xml,
         Err(..) => return Err(RequestError::InvalidResponse(text)),
     };
+    let mut ambiguous = count_children(&xml, "Body") > 1;
     let body = match xml.get_mut_child("Body") {
         Some(body) => body,
         None => return Err(RequestError::InvalidResponse(text)),
     };
     if let Some(ok) = body.take_child(ok) {
-        return Ok(RequestReponse { text, xml: ok });
+        ambiguous |= count_children(body, &ok.name) > 0 || body.get_child("Fault").is_some();
+        return Ok(RequestReponse {
+            text,
+            xml: ok,
+            ambiguous,
+        });
     }
     let upnp_error = match body
         .get_child("Fault")
@@ -481,6 +531,65 @@ pub struct PortMappingEntry {
     pub port_mapping_description: String,
     /// The lease duration of this port mapping in seconds
     pub lease_duration: u32,
+}
+
+/// `GetSpecificPortMappingEntryResponse`: the out arguments of the entry keyed by `(protocol, external_port)` with
+/// the wildcard remote host (the request key is not echoed back by the gateway).
+///
+/// Strict: an ambiguous envelope, a required field that is missing, repeated or not plain text, or a blank
+/// `NewInternalClient` is an invalid response. `NewPortMappingDescription` may be empty.
+pub fn parse_get_specific_port_mapping_entry(
+    result: RequestResult,
+    protocol: PortMappingProtocol,
+    external_port: u16,
+) -> Result<PortMappingEntry, GetSpecificPortMappingEntryError> {
+    let response = result?;
+    let invalid = |what: &str| {
+        GetSpecificPortMappingEntryError::RequestError(RequestError::InvalidResponse(format!(
+            "{what} is missing, repeated or invalid"
+        )))
+    };
+    if response.ambiguous {
+        return Err(invalid("GetSpecificPortMappingEntryResponse"));
+    }
+    let xml = response.xml;
+    let text = |field: &str| {
+        let mut matches = xml
+            .children
+            .iter()
+            .filter_map(|child| child.as_element())
+            .filter(|child| child.name == field);
+        match (matches.next(), matches.next()) {
+            (Some(element), None) => scalar_text(element).ok_or_else(|| invalid(field)),
+            _ => Err(invalid(field)),
+        }
+    };
+    let internal_port = text("NewInternalPort")?
+        .parse()
+        .map_err(|_| invalid("NewInternalPort"))?;
+    let internal_client = Some(text("NewInternalClient")?)
+        .filter(|client| !client.is_empty())
+        .ok_or_else(|| invalid("NewInternalClient"))?;
+    // UPnP boolean: `1`/`true`/`yes` or `0`/`false`/`no`.
+    let enabled = match text("NewEnabled")?.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => true,
+        "0" | "false" | "no" => false,
+        _ => return Err(invalid("NewEnabled")),
+    };
+    let port_mapping_description = text("NewPortMappingDescription")?;
+    let lease_duration = text("NewLeaseDuration")?
+        .parse()
+        .map_err(|_| invalid("NewLeaseDuration"))?;
+    Ok(PortMappingEntry {
+        remote_host: String::new(),
+        external_port,
+        protocol,
+        internal_port,
+        internal_client,
+        enabled,
+        port_mapping_description,
+        lease_duration,
+    })
 }
 
 pub fn parse_get_generic_port_mapping_entry(
@@ -1034,4 +1143,229 @@ fn test_parse_firewall_control_url_empty_is_absent() {
   </device>
 </root>"#;
     assert_eq!(parse_firewall_control_url(text.as_bytes()), None);
+}
+
+#[cfg(test)]
+mod specific_entry_and_udn_tests {
+    use super::*;
+
+    const ROOT: &str = "uuid:00000000-0000-4000-8000-00000000c0de";
+
+    fn description(root_udn: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0"><device>{root_udn}
+  <deviceList><device><UDN>uuid:11111111-2222-4333-8444-555555555555</UDN>
+    <deviceList><device><UDN>uuid:66666666-7777-4888-8999-aaaaaaaaaaaa</UDN><serviceList><service>
+      <serviceType>urn:schemas-upnp-org:service:WANIPConnection:2</serviceType>
+      <SCPDURL>/scpd.xml</SCPDURL><controlURL>/ctl</controlURL>
+    </service></serviceList></device></deviceList>
+  </device></deviceList>
+</device></root>"#
+        )
+    }
+
+    #[test]
+    fn root_udn_is_the_single_direct_udn_of_the_root_device() {
+        let udn = |xml: String| parse_device_urls(xml.as_bytes()).unwrap().root_udn;
+        assert_eq!(
+            udn(description(&format!("<UDN>\n {ROOT}\n</UDN>"))).as_deref(),
+            Some(ROOT)
+        );
+        // The WAN service sits in a nested device with its own UDN; that one must never be reported.
+        assert_eq!(udn(description("")), None);
+        assert_eq!(udn(description(&format!("<UDN>{ROOT}</UDN><UDN>{ROOT}</UDN>"))), None);
+    }
+
+    fn entry(fields: &str) -> RequestResult {
+        let body = format!(
+            r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:R xmlns:u="x">{fields}</u:R></s:Body></s:Envelope>"#
+        );
+        parse_response(body, "R")
+    }
+
+    const FIELDS: &str = "<NewInternalPort>4000</NewInternalPort><NewInternalClient>192.0.2.10</NewInternalClient>\
+        <NewPortMappingDescription>example</NewPortMappingDescription><NewLeaseDuration>60</NewLeaseDuration>";
+
+    #[test]
+    fn enabled_accepts_upnp_booleans_and_rejects_anything_else() {
+        for (value, expected) in [
+            ("1", Some(true)),
+            (" TrUe ", Some(true)),
+            ("yes", Some(true)),
+            ("0", Some(false)),
+            ("False", Some(false)),
+            ("no", Some(false)),
+            ("2", None),
+            ("", None),
+            ("true false", None),
+        ] {
+            let result = parse_get_specific_port_mapping_entry(
+                entry(&format!("{FIELDS}<NewEnabled>{value}</NewEnabled>")),
+                PortMappingProtocol::UDP,
+                4001,
+            );
+            match expected {
+                Some(enabled) => {
+                    let e = result.ok().unwrap();
+                    // The request key is not echoed by the gateway, so it comes from the caller.
+                    assert_eq!(
+                        (e.enabled, e.external_port, e.protocol),
+                        (enabled, 4001, PortMappingProtocol::UDP)
+                    );
+                    assert_eq!(e.remote_host, "");
+                }
+                None => assert!(
+                    matches!(result.err().unwrap(), GetSpecificPortMappingEntryError::RequestError(_)),
+                    "{value:?}"
+                ),
+            }
+        }
+    }
+
+    fn is_invalid(result: Result<PortMappingEntry, GetSpecificPortMappingEntryError>) -> bool {
+        matches!(
+            result.err(),
+            Some(GetSpecificPortMappingEntryError::RequestError(
+                RequestError::InvalidResponse(_)
+            ))
+        )
+    }
+
+    fn parse_entry(result: RequestResult) -> Result<PortMappingEntry, GetSpecificPortMappingEntryError> {
+        parse_get_specific_port_mapping_entry(result, PortMappingProtocol::TCP, 4000)
+    }
+
+    #[test]
+    fn repeated_required_fields_are_rejected_even_when_they_agree() {
+        for field in [
+            "<NewInternalPort>4000</NewInternalPort>",
+            "<NewInternalPort>4001</NewInternalPort>",
+            "<NewInternalClient>192.0.2.10</NewInternalClient>",
+            "<NewInternalClient>192.0.2.11</NewInternalClient>",
+            "<NewEnabled>1</NewEnabled>",
+            "<NewEnabled>0</NewEnabled>",
+            "<NewPortMappingDescription>other</NewPortMappingDescription>",
+            "<NewLeaseDuration>60</NewLeaseDuration>",
+            "<NewLeaseDuration>0</NewLeaseDuration>",
+        ] {
+            let fields = format!("{FIELDS}<NewEnabled>1</NewEnabled>{field}");
+            assert!(is_invalid(parse_entry(entry(&fields))), "{field}");
+        }
+    }
+
+    #[test]
+    fn nested_or_mixed_scalars_are_rejected() {
+        for (bad, field) in [
+            ("<NewEnabled><x>1</x></NewEnabled>", "NewEnabled"),
+            ("<NewEnabled>1<x/></NewEnabled>", "NewEnabled"),
+            ("<NewEnabled>1<x>0</x></NewEnabled>", "NewEnabled"),
+            ("<NewInternalPort>4000<x/></NewInternalPort>", "NewInternalPort"),
+            (
+                "<NewInternalClient><x>192.0.2.10</x></NewInternalClient>",
+                "NewInternalClient",
+            ),
+            ("<NewLeaseDuration><x>60</x></NewLeaseDuration>", "NewLeaseDuration"),
+            (
+                "<NewPortMappingDescription>a<x/>b</NewPortMappingDescription>",
+                "NewPortMappingDescription",
+            ),
+        ] {
+            let mut fields = format!("{FIELDS}<NewEnabled>1</NewEnabled>");
+            fields = fields
+                .replace(&format!("<{field}>"), &format!("<{field}Old>"))
+                .replace(&format!("</{field}>"), &format!("</{field}Old>"));
+            let fields = format!("{fields}{bad}");
+            assert!(is_invalid(parse_entry(entry(&fields))), "{bad}");
+        }
+    }
+
+    #[test]
+    fn blank_client_is_rejected_and_empty_description_is_valid() {
+        for client in ["", "   ", "\n"] {
+            let fields = FIELDS.replace("192.0.2.10", client) + "<NewEnabled>1</NewEnabled>";
+            assert!(is_invalid(parse_entry(entry(&fields))), "{client:?}");
+        }
+        for description in [
+            "<NewPortMappingDescription></NewPortMappingDescription>",
+            "<NewPortMappingDescription/>",
+        ] {
+            let fields = FIELDS.replace(
+                "<NewPortMappingDescription>example</NewPortMappingDescription>",
+                description,
+            ) + "<NewEnabled>1</NewEnabled>";
+            assert_eq!(parse_entry(entry(&fields)).ok().unwrap().port_mapping_description, "");
+        }
+    }
+
+    #[test]
+    fn ambiguous_envelopes_are_rejected_by_the_strict_parser_only() {
+        let fields = format!("{FIELDS}<NewEnabled>1</NewEnabled>");
+        let ok = format!(r#"<u:R xmlns:u="x">{fields}</u:R>"#);
+        let conflicting = format!(r#"<u:R xmlns:u="x">{}</u:R>"#, fields.replace("4000", "4001"));
+        let fault = "<s:Fault><detail><UPnPError><errorCode>714</errorCode><errorDescription>d</errorDescription></UPnPError></detail></s:Fault>";
+        let envelope = |bodies: &str| format!(r#"<s:Envelope xmlns:s="x">{bodies}</s:Envelope>"#);
+        for (name, xml) in [
+            (
+                "two responses",
+                envelope(&format!("<s:Body>{ok}{conflicting}</s:Body>")),
+            ),
+            (
+                "two bodies",
+                envelope(&format!("<s:Body>{ok}</s:Body><s:Body>{conflicting}</s:Body>")),
+            ),
+            ("response and fault", envelope(&format!("<s:Body>{ok}{fault}</s:Body>"))),
+        ] {
+            let lenient = parse_response(xml.clone(), "R");
+            assert!(lenient.is_ok(), "{name}: existing actions keep first-match semantics");
+            assert!(is_invalid(parse_entry(lenient)), "{name}");
+        }
+        let single = parse_response(envelope(&format!("<s:Body>{ok}</s:Body>")), "R");
+        assert!(parse_entry(single).is_ok());
+    }
+
+    #[test]
+    fn whitespace_only_or_nested_root_udn_is_none() {
+        let udn = |root: &str| parse_device_urls(description(root).as_bytes()).unwrap().root_udn;
+        assert_eq!(udn("<UDN>  \n </UDN>"), None);
+        assert_eq!(udn("<UDN/>"), None);
+        assert_eq!(udn("<UDN>uuid:x<y/></UDN>"), None);
+        assert_eq!(udn("<UDN><y>uuid:x</y></UDN>").as_deref(), None);
+    }
+
+    #[test]
+    fn missing_or_malformed_fields_are_invalid_responses() {
+        for fields in [
+            "<NewEnabled>1</NewEnabled>".to_string(),
+            format!("{}<NewEnabled>1</NewEnabled>", FIELDS.replace("4000", "70000")),
+            format!(
+                "{}<NewEnabled>1</NewEnabled>",
+                FIELDS.replace("<NewLeaseDuration>60", "<NewLeaseDuration>-1")
+            ),
+        ] {
+            let result = parse_get_specific_port_mapping_entry(entry(&fields), PortMappingProtocol::TCP, 4000);
+            assert!(
+                matches!(result.err().unwrap(), GetSpecificPortMappingEntryError::RequestError(_)),
+                "{fields}"
+            );
+        }
+    }
+
+    #[test]
+    fn faults_map_to_typed_errors() {
+        for (code, ok) in [(606, "auth"), (714, "none"), (501, "other")] {
+            let fault = format!(
+                r#"<s:Envelope xmlns:s="x"><s:Body><s:Fault><detail><UPnPError><errorCode>{code}</errorCode><errorDescription>d</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>"#
+            );
+            let err = parse_get_specific_port_mapping_entry(parse_response(fault, "R"), PortMappingProtocol::TCP, 1)
+                .err()
+                .unwrap();
+            match (code, ok, err) {
+                (606, "auth", GetSpecificPortMappingEntryError::ActionNotAuthorized) => {}
+                (714, "none", GetSpecificPortMappingEntryError::NoSuchPortMapping) => {}
+                (501, "other", GetSpecificPortMappingEntryError::RequestError(RequestError::ErrorCode(501, _))) => {}
+                (_, _, e) => panic!("{code}: {e:?}"),
+            }
+        }
+    }
 }

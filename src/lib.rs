@@ -17,8 +17,8 @@ pub use self::common::SearchOptions;
 pub use self::errors::PinholeError;
 #[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::errors::{
-    AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError, RemovePortError, RequestError,
-    SearchError,
+    AddAnyPortError, AddPortError, GetExternalIpError, GetGenericPortMappingEntryError,
+    GetSpecificPortMappingEntryError, RemovePortError, RequestError, SearchError,
 };
 #[cfg(any(feature = "io_sync", feature = "aio_tokio"))]
 pub use self::errors::{Error, Result};
